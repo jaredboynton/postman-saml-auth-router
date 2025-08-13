@@ -1,0 +1,3 @@
+# Postman Authentication Router - Python Dependencies
+# No external dependencies required - uses Python standard library only
+# The daemon uses only built-in Python modules

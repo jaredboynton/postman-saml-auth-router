@@ -1,0 +1,52 @@
+# Archive folder (old/test files)
+archive/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# SSL certificates (contain private keys) - NEVER COMMIT THESE
+ssl/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# Config with sensitive data
+config/config.json
+config/config.json.local
+config/*.json
+!config/*.template
+!config/*.example
+
+# Logs
+*.log
+/var/log/postman-auth-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Distribution
+dist/
+build/
+*.egg-info/

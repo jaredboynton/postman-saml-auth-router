@@ -1,0 +1,20 @@
+{
+  "_comment": "Basic Okta configuration - just fill in your values",
+  "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/YOUR_INTEGRATION_ID/sso/saml",
+  "okta_app_id": "YOUR_OKTA_APP_ID",
+  "postman_hostname": "identity.getpostman.com",
+  
+  "_comment_advanced": "For other IDPs, add 'idp_type' field - see examples below",
+  "_azure_example": {
+    "idp_type": "azure",
+    "tenant_id": "12345678-1234-1234-1234-123456789012",
+    "app_id": "87654321-4321-4321-4321-210987654321",
+    "postman_hostname": "identity.getpostman.com"
+  },
+  "_ping_example": {
+    "idp_type": "ping", 
+    "idp_url": "https://auth.pingone.com/YOUR_ENV_ID/saml20/idp/sso",
+    "connection_id": "YOUR_CONNECTION_ID",
+    "postman_hostname": "identity.getpostman.com"
+  }
+}
