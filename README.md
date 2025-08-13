@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A **production-ready reference implementation** for forced SAML authentication in Postman. Fully validated across multiple enterprise environments, this solution demonstrates how to enforce corporate authentication using standard MDM deployment patterns.
+A **production-ready reference implementation** for forced SAML authentication in Postman. Fully validated and working, this solution demonstrates how to enforce corporate authentication using standard MDM deployment patterns. This is currently live on multiple of my machines.
 
 ## For Internal Postman Testing
 
