@@ -232,7 +232,7 @@ The daemon logs everything to console with timestamps and detailed request flow.
 - Requires network team involvement (additional department, additional approvals)
 - MDM admins are already deploying Purple App - this uses the same team
 - Network changes require change control boards, risk assessments, rollback plans
-- As our Head of Security Sam Chehab says: "Everybody hates touching the network stack"
+- Sam:"Everybody hates touching the network stack"
 
 **Postman Becomes the Auth Owner (Forever)**
 - We become responsible for every customer's unique auth flow
