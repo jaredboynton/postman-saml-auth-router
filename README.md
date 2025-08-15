@@ -318,17 +318,6 @@ This is how major enterprises deploy endpoint security - it's battle-tested.
 **"What about IDP outages?"**
 - Postman sessions persist for 90 days by default (minimum 18 hours)
 - Once authenticated, users maintain access even during IDP downtime
-- This session persistence knowledge demonstrates deep Postman understanding
-
-**"What about users with multiple Postman accounts?"**
-- Cookie isolation per workspace handles this transparently
-- Browser profiles can separate personal/work accounts
-- No different from current multi-account handling
-
-**"What about developer productivity?"**
-- One-time auth per 90-day session
-- No impact on API testing workflows
-- Actually improves security without friction
 
 ## Architecture Decisions
 
