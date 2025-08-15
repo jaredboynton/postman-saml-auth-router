@@ -25,15 +25,14 @@ Modern enterprises require strict control over authentication and data access. W
 - Company data remains on managed devices
 - Compliance requirements are automatically enforced
 
-**This solution delivers comprehensive enterprise control:**
-- **SAML-only authentication** - All users authenticate through your corporate IdP
-- **Single workspace enforcement** - Users access ONLY your enterprise Postman instance
-- **Works with Domain Capture** - Ensures company emails stay in company workspace
-- **Works with Device Trust** - Restricts access to managed devices only
+**For comprehensive enterprise control:**
+- **This solution enforces SAML-only authentication** - All users authenticate through your corporate IdP
+- **When deployed in conjunction with Domain Capture** - Ensures company emails stay in company Postman Enterprise team and cannot fork/export/import into any other Postman team.
+- **When deployed in conjunction with Device Trust via IDP** - Restricts all Postman access to managed devices only
 
-**Result: Complete enterprise control with 95% data exfiltration prevention.** Combined with Postman's native enterprise features, this creates an impenetrable security perimeter while maintaining developer productivity.
+**Result: Complete enterprise control with 99% data exfiltration prevention.** Combined with Postman's native enterprise features, this creates an impenetrable security perimeter while maintaining developer productivity.
 
-*Note: Like all enterprise applications, deliberate manual actions (copy/paste, screenshots, photographing screens) remain inherently unpreventable. This solution blocks all automated and accidental exfiltration vectors while maintaining practical usability.*
+*Note on the other 1%: Like all enterprise applications, deliberate manual actions (copy/paste, screenshots, photographing screens) remain inherently unpreventable. This solution blocks all automated and accidental exfiltration vectors while maintaining practical usability.*
 
 ### Industry Validation
 
