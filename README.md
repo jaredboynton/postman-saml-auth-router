@@ -6,14 +6,14 @@ A **production-ready reference implementation** for forced SAML authentication i
 
 ## For Internal Postman Testing
 
-**TL;DR**: Ask Jared for `config.json`, then run `sudo ./demo.sh`. You'll see Postman force our corporate SSO flow.
+**TL;DR**: Properly configure `config.json`, then run `sudo ./demo.sh`. You'll see Postman force your corporate SSO flow.
 
 **What you need**:
 1. This repo (you have it)
-2. The `config.json` file with our internal Okta config (ask Jared)
+2. The `config.json` file with your internal IDP config
 3. 5 minutes to see it work
 
-**Why this matters**: This proves we can enforce SAML-only authentication for Postman across all corporate devices using just MDM deployment. No network changes, no proxies, no complex infrastructure.
+**Why this matters**: This proves enforcing SAML-only authentication for Postman across all corporate devices using just MDM deployment. No network changes, no proxies, no complex infrastructure.
 
 ## Quick Demo (2 minutes)
 
@@ -238,7 +238,7 @@ The daemon logs everything to console with timestamps and detailed request flow.
 - We become responsible for every customer's unique auth flow
 - When auth breaks, it's "Postman's fault" not theirs
 - Requires perpetual support for every implementation
-- Each customer snowflake config becomes our technical debt
+- Each unique customer config becomes our technical debt
 
 **Operational Nightmare**
 - Every single customer requires internal configuration on our servers
@@ -379,6 +379,8 @@ Replace self-signed certificates with MDM-deployed certificates:
 ```bash
 security find-certificate -c "identity.getpostman.com" -p > ssl/cert.pem
 ```
+
+**For Enterprise CA Configuration**: Instead of using self-signed certificates, generate a CSR for `identity.getpostman.com`, submit to your enterprise CA (Microsoft ADCS, Venafi, etc.), and deploy the resulting certificate chain via MDM. The daemon automatically uses certificates in `ssl/cert.pem` and `ssl/key.pem`. Most enterprises will deploy these via certificate profiles that install directly to the system keystore, eliminating browser warnings and ensuring proper chain validation.
 
 ### Platform-Specific Deployment
 Only two potential configs necessary (three if you count linux). No network configs, no network admins; the same team deploying the Purple App does this too.
