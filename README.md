@@ -149,7 +149,7 @@ sudo ./demo.sh
 
 The demo will:
 1. Generate self-signed certificates
-2. Add certificates to system keychain (no browser warnings)
+2. Add certificates to system keychain
 3. Use your config.json for IDP settings  
 4. Modify /etc/hosts to intercept identity.getpostman.com
 5. Flush DNS cache
@@ -262,7 +262,7 @@ This capability ensures that within minutes, all users must re-authenticate thro
 - Works on any network (office, home, coffee shop)
 - Works with any VPN
 - No single point of failure
-- Simple to troubleshoot (it's all local)
+- Simple to troubleshoot via local testing
 
 **MDM Makes It Scalable:**
 - Push to 10 or 10,000 machines identically
