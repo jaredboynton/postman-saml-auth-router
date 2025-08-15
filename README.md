@@ -31,7 +31,7 @@ A **production-ready reference implementation** for enforcing SAML authenticatio
 
 ## Quick Start Guide
 
-**For internal testing**: Obtain the configuration file from your designated contact, then:
+**For internal (Postman) testing**: Obtain the configuration file from your designated contact, then:
 
 ```bash
 sudo ./demo.sh
