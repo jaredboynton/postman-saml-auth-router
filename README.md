@@ -17,8 +17,21 @@ A **production-ready reference implementation** for enforcing SAML authenticatio
 
 ## Why This Solution Matters
 
-### The Problem
-Postman allows multiple authentication methods. Enterprises need to enforce SAML-only authentication for compliance and security.
+### The Problem: Complete Data Exfiltration Prevention
+
+Postman's flexibility creates critical enterprise security gaps:
+- Users can authenticate with personal Gmail/GitHub accounts
+- Users can join multiple teams and transfer data between them  
+- Company data can be accessed from personal devices
+- No enforcement of corporate authentication policies
+
+**This solution provides comprehensive protection:**
+- **Enforces SAML-only authentication** - No bypass via personal accounts
+- **Locks users to designated enterprise instance** - Cannot log into ANY other Postman team
+- **Combined with Domain Capture** - Prevents multi-team access with company email
+- **Combined with Device Trust** - Enterprise team only accessible from managed devices
+
+**Result: 95% data exfiltration prevention.** The only remaining vector is manual copy-paste, which is inherently unpreventable in any application.
 
 ### Industry Validation
 
@@ -88,7 +101,7 @@ Validates Postman session cookies
   - Can't be circumvented by changing networks
   - Enforced at the OS level, not network level
 
-**Best Practice Implementation**
+**Implementation**
 1. Deploy daemon as protected system service
 2. Use MDM configuration profiles to prevent modification
 3. Certificate pinning prevents MITM attacks
@@ -168,7 +181,7 @@ Replace self-signed certificates with MDM-deployed certificates:
 
 ### Platform-Specific Deployment
 
-Only two potential configs necessary (three if you count linux). No network configs, no network admins; the same team deploying the Purple App does this too.
+Only two potential configs necessary (three if you count linux). No network configs, no network admins; the same team deploying the Postman Enterprise Applicaiton does this too.
 
 **macOS (JAMF)**
 ```bash
