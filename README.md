@@ -268,31 +268,6 @@ The daemon logs everything to console with timestamps and detailed request flow.
 - Fragile across customer network diversity (proxies, firewalls, load balancers)
 - Potential butterfly effect breakage when modifying network stacks
 
-**Professional Services Non-Argument**
-- "We can productize this" applies to BOTH approaches
-- This MDM approach can still be offered as Professional Services
-- Difference: set-and-forget implementation vs perpetual support burden
-
-### Total Cost of Ownership Reality Check
-
-**MDM Approach (This Solution)**
-- Implementation: 5 minutes
-- Ongoing maintenance: Zero
-- Support tickets: Zero
-- Liability: Customer owns their auth
-
-**Server-Side Header Routing**
-- Implementation: Weeks of config coordination
-- Ongoing maintenance: Forever
-- Support tickets: Every auth hiccup
-- Liability: Postman owns all auth problems
-
-### This Drives Enterprise Licenses Just the Same
-Both approaches achieve identical business outcomes:
-- Forces SAML-only authentication
-- Drives enterprise license purchases
-- Ensures compliance
-
 The difference: MDM approach is set-and-forget with zero ongoing liability.
 
 ## Security: MDM is MORE Secure Than Server-Side
@@ -417,6 +392,37 @@ MDM pushes the right config based on company's IDP.
 - **Monitoring**: MDM monitors service health
 - **Updates**: MDM pushes new versions
 - **Config Changes**: MDM updates config files
+
+### Enterprise Session Management
+
+**Immediate Session Termination Capability**
+
+Organizations can instantly terminate all existing Postman sessions across their entire fleet using MDM-deployed scripts. This is critical for:
+- Security incident response
+- Immediate enforcement of new authentication policies  
+- Offboarding employees with active sessions
+- Compliance requirements for session control
+
+**MDM Deployment Example (JAMF)**
+```bash
+# Push and execute clear_sessions.sh to all managed devices
+jamf policy -trigger clear_postman_sessions
+
+# The script clears sessions from:
+# - All browser cookies (Safari, Chrome, Firefox, Edge)
+# - Postman Desktop application data
+# - System keychain entries
+```
+
+**Windows (Intune)**
+```powershell
+# Deploy via Intune PowerShell script
+Invoke-Command -ScriptBlock {
+    & "C:\Program Files\Postman\AuthRouter\clear_sessions.ps1"
+}
+```
+
+This capability ensures that within minutes, all users must re-authenticate through your corporate IdP, providing immediate security control when needed.
 
 ### Why This Approach Works
 
