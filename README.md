@@ -33,6 +33,8 @@ Modern enterprises require strict control over authentication and data access. W
 
 **Result: Complete enterprise control with 95% data exfiltration prevention.** Combined with Postman's native enterprise features, this creates an impenetrable security perimeter while maintaining developer productivity.
 
+*Note: Like all enterprise applications, deliberate manual actions (copy/paste, screenshots, photographing screens) remain inherently unpreventable. This solution blocks all automated and accidental exfiltration vectors while maintaining practical usability.*
+
 ### Industry Validation
 
 This local enforcement pattern is the **industry standard** for endpoint security:
