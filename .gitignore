@@ -12,13 +12,14 @@ env/
 ENV/
 
 # SSL certificates (contain private keys) - NEVER COMMIT THESE
-ssl/
-*.pem
-*.key
-*.crt
-*.csr
-*.p12
-*.pfx
+ssl/*.pem
+ssl/*.key
+ssl/*.crt
+ssl/*.csr
+ssl/*.p12
+ssl/*.pfx
+!ssl/.gitkeep
+!ssl/cert.conf
 
 # Config with sensitive data
 config/config.json
