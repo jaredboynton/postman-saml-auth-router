@@ -288,25 +288,60 @@ launchctl load -w /Library/LaunchDaemons/com.postman.auth.router.plist
 
 **Immediate Session Termination Capability**
 
-Organizations can instantly terminate all existing Postman sessions across their entire fleet using MDM-deployed scripts. This is critical for:
+Organizations can instantly terminate all existing Postman sessions across their entire fleet using the included MDM-deployable scripts. This is critical for:
 - Immediate enforcement of new authentication policies  
 - Offboarding employees with active sessions
 - Compliance requirements for session control
+- Security incident response
 
-**MDM Deployment Example (JAMF)**
+**Included Session Management Scripts:**
+- `clear_mac_sessions.sh` - Clears all Postman sessions on macOS
+- `clear_windows_sessions.ps1` - Clears all Postman sessions on Windows
+
+These scripts clear sessions from:
+- All major browsers (Chrome, Firefox, Safari, Edge)
+- Postman Desktop application
+- System credential stores
+
+**macOS Deployment (JAMF)**
 ```bash
-# Push and execute session termination to all managed devices
+#!/bin/bash
+# Deploy clear_mac_sessions.sh via JAMF policy
+# Upload script to JAMF Admin, then create policy with trigger
+
+# Example JAMF policy execution
 jamf policy -trigger clear_postman_sessions
+
+# Or execute directly via JAMF script payload
+/usr/local/bin/clear_mac_sessions.sh
 ```
 
-**Windows (Intune)**
+**Windows Deployment (Intune/SCCM)**
 ```powershell
-# Deploy via Intune PowerShell script
-Invoke-Command -ScriptBlock {
-    Remove-Item "$env:APPDATA\Postman\cookies" -Recurse -Force
-    Remove-Item "$env:LOCALAPPDATA\Postman\cookies" -Recurse -Force
-}
+# Deploy clear_windows_sessions.ps1 via Intune script
+# Upload to Intune > Devices > Scripts > Add
+
+# Example Intune PowerShell deployment
+Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\ProgramData\Postman\clear_windows_sessions.ps1"
+
+# Or deploy via SCCM package
 ```
+
+**Automated Deployment Examples:**
+
+*JAMF (macOS):*
+1. Upload `clear_mac_sessions.sh` to JAMF Admin
+2. Create Smart Computer Group for target devices
+3. Create Policy with script payload
+4. Set trigger: `clear_postman_sessions`
+5. Deploy via Self Service or push trigger
+
+*Intune (Windows):*
+1. Navigate to Devices > Scripts > Add
+2. Upload `clear_windows_sessions.ps1`
+3. Configure: Run as System, No user context needed
+4. Assign to device groups
+5. Execute on-demand or scheduled
 
 This capability ensures that within minutes, all users must re-authenticate through your corporate IdP, providing immediate security control when needed.
 
@@ -469,15 +504,13 @@ postman_redirect_daemon/
 - Industry feedback: "Everybody hates touching the network stack"
 
 **Operational Complexity**
-- Every customer requires custom configuration on Postman servers
-- Slows down customer onboarding (weeks vs. minutes)
+- Every customer would require custom configuration on Postman servers
+- Slows down onboarding (weeks vs. minutes)
 - Fragile across customer network diversity
 
 **The MDM Advantage**
 - Implementation: 5 minutes vs. weeks
-- Ongoing maintenance: Zero vs. perpetual
-- Support burden: Customer-owned vs. Postman-owned
-- Same business outcome, fraction of the complexity
+- Customer-owned vs. Postman-owned -- you wholly own your authentication flow
 
 ### What's New: Desktop Support
 
