@@ -1,20 +1,42 @@
 {
-  "_comment": "Basic Okta configuration - just fill in your values",
-  "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/YOUR_INTEGRATION_ID/sso/saml",
-  "okta_app_id": "YOUR_OKTA_APP_ID",
-  "postman_hostname": "identity.getpostman.com",
+  "_comment": "Postman SAML Enforcement Configuration",
   
-  "_comment_advanced": "For other IDPs, add 'idp_type' field - see examples below",
-  "_azure_example": {
-    "idp_type": "azure",
-    "tenant_id": "12345678-1234-1234-1234-123456789012",
-    "app_id": "87654321-4321-4321-4321-210987654321",
+  "postman_team_name": "YOUR_TEAM_NAME",
+  "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
+  
+  "idp_config": {
+    "_comment": "Identity Provider Configuration",
+    "idp_type": "okta",
+    "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/YOUR_INTEGRATION_ID/sso/saml",
+    "okta_app_id": "YOUR_OKTA_APP_ID"
+  },
+  
+  "advanced": {
+    "_comment": "Advanced settings - defaults should work for most deployments",
+    "dns_server": "8.8.8.8",
+    "dns_fallback_ips": {
+      "identity.getpostman.com": "104.18.36.161",
+      "identity.postman.co": "104.18.37.186",
+      "identity.postman.com": "104.18.37.161"
+    },
+    "log_file": "/var/log/postman-auth.log",
+    "timeout_seconds": 30,
+    "oauth_timeout_seconds": 30,
+    "daemon_port": 443,
+    "health_port": 8443,
     "postman_hostname": "identity.getpostman.com"
   },
-  "_ping_example": {
-    "idp_type": "ping", 
-    "idp_url": "https://auth.pingone.com/YOUR_ENV_ID/saml20/idp/sso",
-    "connection_id": "YOUR_CONNECTION_ID",
-    "postman_hostname": "identity.getpostman.com"
+  
+  "_examples": {
+    "azure": {
+      "idp_type": "azure",
+      "tenant_id": "12345678-1234-1234-1234-123456789012",
+      "app_id": "87654321-4321-4321-4321-210987654321"
+    },
+    "ping": {
+      "idp_type": "ping",
+      "idp_url": "https://auth.pingone.com/YOUR_ENV_ID/saml20/idp/sso",
+      "connection_id": "YOUR_CONNECTION_ID"
+    }
   }
 }

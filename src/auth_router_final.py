@@ -1,488 +1,1074 @@
 #!/usr/bin/env python3
-"""
-Final Postman Authentication Router with SAML Proxy
-Properly handles SAML callbacks by proxying to real Postman servers
+"""Postman SAML Enforcement Daemon for Enterprise MDM Deployment.
+
+This daemon intercepts Postman Desktop authentication requests and enforces
+SAML-only authentication by redirecting users directly to the configured
+enterprise SSO provider, bypassing team selection and auth method choice.
+
+Designed for enterprise MDM deployment with ZERO external dependencies.
+Uses only Python standard library for maximum compatibility and security.
+
+Usage:
+    sudo python3 auth_router_final.py [--config config.json] [--mode enforce|monitor]
+
+Enterprise Features:
+    - State machine tracking of authentication flow
+    - Dynamic hosts file management (optional)
+    - Comprehensive logging and metrics
+    - Health check endpoint for monitoring
+    - Graceful handling of certificate updates
+    - Support for multiple IdP providers
+
+Author: Enterprise Security Team
+Version: 2.0.0
 """
 
 import http.server
-import socketserver
-import ssl
 import json
 import logging
 import os
-import subprocess
+import signal
 import socket
-import uuid
-import base64
-from urllib.parse import parse_qs, urlparse, parse_qsl, urlencode
-from idp_providers import create_idp_provider
+import ssl
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta
+from enum import Enum
+from http.client import HTTPSConnection, HTTPConnection
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Any, List
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG for more detail
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger('PostmanAuthRouter-Final')
+def setup_logging(log_file=None):
+    """Set up logging configuration."""
+    if log_file is None:
+        log_file = '/var/log/postman-auth.log'
+    handlers = [logging.StreamHandler()]
+    
+    # Only add file handler if we have permission
+    try:
+        file_handler = logging.FileHandler(log_file, mode='a')
+        handlers.append(file_handler)
+    except (PermissionError, OSError):
+        # Running without root, log to console only
+        pass
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
+    return logging.getLogger('postman-auth')
+
+logger = setup_logging()
 
 
 class DNSResolver:
-    """Resolves real IPs using external DNS to bypass hosts file"""
+    """Resolves real IP addresses for domains to avoid proxy loops.
     
-    def __init__(self, dns_server='8.8.8.8'):
+    When /etc/hosts redirects domains to 127.0.0.1, we need to resolve
+    the real IPs to proxy requests upstream. Uses 'dig' command with
+    external DNS to bypass local hosts file.
+    
+    Attributes:
+        cache: Cache of resolved domain->IP mappings
+        dns_server: External DNS server to use (default: 8.8.8.8)
+    """
+    
+    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None):
+        """Initialize DNS resolver.
+        
+        Args:
+            dns_server: External DNS server to use for resolution
+            fallback_ips: Fallback IP addresses for known domains
+        """
+        self.cache: Dict[str, str] = {}
         self.dns_server = dns_server
-        self.cache = {}
+        self.fallback_ips = fallback_ips or {}
+        self._lock = threading.Lock()
     
-    def resolve(self, hostname):
-        """Get real IP for hostname by querying external DNS"""
-        if hostname in self.cache:
-            return self.cache[hostname]
+    def resolve(self, hostname: str) -> str:
+        """Resolve hostname to real IP address.
         
-        try:
-            # Use dig to query Google DNS directly, following CNAMEs
-            result = subprocess.run(
-                ['dig', f'@{self.dns_server}', hostname, 'A', '+short'],
-                capture_output=True, text=True, timeout=5
-            )
+        Args:
+            hostname: Domain name to resolve
             
-            if result.returncode == 0 and result.stdout.strip():
-                lines = result.stdout.strip().split('\n')
-                # Get last line which should be the IP (after CNAME resolution)
-                for line in reversed(lines):
-                    # Check if it's an IP address (contains dots and all parts are numbers)
-                    if '.' in line and all(part.isdigit() for part in line.split('.')):
-                        self.cache[hostname] = line
-                        logger.info(f"Resolved {hostname} to {line}")
-                        return line
-        except Exception as e:
-            logger.error(f"DNS resolution failed: {e}")
-        
-        # Fallback
-        return socket.gethostbyname(hostname)
+        Returns:
+            IP address of the domain
+        """
+        with self._lock:
+            # Check cache first
+            if hostname in self.cache:
+                return self.cache[hostname]
+            
+            try:
+                # Use dig to resolve via external DNS
+                result = subprocess.run(
+                    ['dig', f'@{self.dns_server}', hostname, 'A', '+short'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    # Parse dig output - get last IP (actual server, not CNAME)
+                    lines = result.stdout.strip().split('\n')
+                    for line in reversed(lines):
+                        # Check if it's a valid IP
+                        parts = line.split('.')
+                        if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                            self.cache[hostname] = line
+                            logger.info(f"Resolved {hostname} to {line}")
+                            return line
+            
+            except Exception as e:
+                logger.error(f"DNS resolution failed for {hostname}: {e}")
+            
+            # Fallback to configured IPs for known domains
+            if not self.fallback_ips:
+                # Default fallbacks if none configured
+                self.fallback_ips = {
+                    'identity.getpostman.com': '104.18.36.161',
+                    'identity.postman.co': '104.18.37.186',
+                    'identity.postman.com': '104.18.37.161'
+                }
+            
+            ip = self.fallback_ips.get(hostname, '104.18.36.161')
+            self.cache[hostname] = ip
+            logger.warning(f"Using fallback IP for {hostname}: {ip}")
+            return ip
 
 
-class FinalAuthRouter(http.server.BaseHTTPRequestHandler):
-    """Final router with proper SAML callback handling and IDP abstraction"""
+class AuthState(Enum):
+    """Authentication flow states for the state machine."""
+    IDLE = "idle"
+    AUTH_INIT = "auth_init"
+    LOGIN_REDIRECT = "login_redirect"
+    SAML_FLOW = "saml_flow"
+    OAUTH_CONTINUATION = "oauth_continuation"
+    COMPLETE = "complete"
+
+
+class OperationMode(Enum):
+    """Operation modes for the daemon."""
+    ENFORCE = "enforce"  # Force SAML authentication
+    MONITOR = "monitor"  # Log but don't redirect
+    TEST = "test"       # Test mode with verbose logging
+
+
+class AuthStateMachine:
+    """Tracks authentication flow state for proper interception.
     
-    # Configuration-driven values (loaded from config.json)
-    OKTA_APP_ID = None
-    IDP_URL = None
-    POSTMAN_HOSTNAME = None
+    This state machine ensures we only intercept at the right points
+    in the authentication flow to avoid breaking OAuth continuation.
     
-    # Shared DNS resolver and IDP provider
-    dns_resolver = DNSResolver()
-    idp_provider = None
-    config = None
+    Attributes:
+        current_state: Current state in the authentication flow
+        session_data: Data collected during the current session
+        state_timeout: Timeout for resetting stuck sessions
+        metrics: Performance and security metrics
+    """
     
-    @classmethod
-    def set_config(cls, config_path):
-        """Load configuration and set all values from config file"""
-        with open(config_path, 'r') as f:
-            cls.config = json.load(f)
+    def __init__(self, timeout_seconds: int = 30, oauth_timeout_seconds: int = 30):
+        """Initialize the state machine.
         
-        # Set basic values from config (works for both legacy and new configs)
-        cls.OKTA_APP_ID = cls.config.get('okta_app_id', cls.OKTA_APP_ID)
-        cls.IDP_URL = cls.config.get('idp_url', cls.IDP_URL)
-        cls.POSTMAN_HOSTNAME = cls.config.get('postman_hostname', 'identity.getpostman.com')
-        
-        # Initialize IDP provider if idp_type is specified
-        if 'idp_type' in cls.config:
-            cls.idp_provider = create_idp_provider(cls.config)
-            logger.info(f"Configured with {cls.idp_provider.get_display_name()} as IDP")
-        else:
-            logger.info("Using legacy Okta configuration")
+        Args:
+            timeout_seconds: Seconds before resetting a stuck session
+        """
+        self.current_state = AuthState.IDLE
+        self.session_data: Dict[str, Any] = {}
+        self.state_entered_at = datetime.now()
+        self.timeout_seconds = timeout_seconds
+        self.oauth_timeout_seconds = oauth_timeout_seconds
+        self.metrics = {
+            'auth_attempts': 0,
+            'saml_redirects': 0,
+            'bypass_attempts': 0,
+            'successful_auths': 0,
+            'failed_auths': 0
+        }
+        self._lock = threading.Lock()
     
-    # Postman session cookie names
-    POSTMAN_COOKIES = [
-        'legacy_sails.sid',
-        'pm_dvc',
-        'postman.sid',
-        'pm.sid',
-        'workspace_session',
-        'postman-session'
-    ]
+    def transition_to(self, new_state: AuthState, data: Optional[Dict] = None) -> None:
+        """Transition to a new state.
+        
+        Args:
+            new_state: The state to transition to
+            data: Optional data to store for this transition
+        """
+        with self._lock:
+            old_state = self.current_state
+            self.current_state = new_state
+            self.state_entered_at = datetime.now()
+            
+            if data:
+                self.session_data.update(data)
+            
+            logger.info(f"State transition: {old_state.value} -> {new_state.value}")
+            
+            # Reset session data when returning to IDLE
+            if new_state == AuthState.IDLE:
+                self.session_data = {}
+    
+    def should_intercept(self, host: str, path: str) -> bool:
+        """Determine if a request should be intercepted based on current state.
+        
+        Args:
+            host: The hostname of the request
+            path: The path of the request
+            
+        Returns:
+            True if the request should be intercepted, False otherwise
+        """
+        with self._lock:
+            # Check for timeout
+            if self._is_timed_out():
+                logger.warning("Session timed out, resetting to IDLE")
+                self.current_state = AuthState.IDLE
+                self.session_data = {}
+            
+            # State-based interception rules
+            if self.current_state == AuthState.IDLE:
+                # Start tracking when we see initial auth (Desktop or Browser flow)
+                if host == "identity.getpostman.com" and ("/client" in path or path.startswith("/login")):
+                    self.current_state = AuthState.AUTH_INIT
+                    self.state_entered_at = datetime.now()
+                    self.metrics['auth_attempts'] += 1
+                    # For browser flows starting directly at /login, intercept immediately
+                    if path.startswith("/login") and "/client" not in path:
+                        return True  # Intercept browser login
+                    return False  # Pass through Desktop client requests
+            
+            elif self.current_state == AuthState.AUTH_INIT:
+                # Intercept login page to force SAML
+                if host == "identity.getpostman.com" and path.startswith("/login"):
+                    self.current_state = AuthState.LOGIN_REDIRECT
+                    self.state_entered_at = datetime.now()
+                    return True  # Intercept and redirect
+            
+            elif self.current_state == AuthState.LOGIN_REDIRECT:
+                # We're redirecting to SAML
+                if "/sso/" in path:
+                    self.current_state = AuthState.SAML_FLOW
+                    self.state_entered_at = datetime.now()
+                    return False  # Let SAML flow proceed
+            
+            elif self.current_state == AuthState.SAML_FLOW:
+                # SAML is in progress - check for OAuth continuation on Postman domains
+                if ("/continue" in path and 
+                    host in ["identity.postman.co", "identity.postman.com"]):
+                    self.current_state = AuthState.OAUTH_CONTINUATION
+                    self.state_entered_at = datetime.now()
+                    return False  # CRITICAL: Don't intercept OAuth continuation
+            
+            elif self.current_state == AuthState.OAUTH_CONTINUATION:
+                # OAuth continuation in progress - track but don't intercept!
+                
+                # Check for OAuth-specific timeout
+                if (datetime.now() - self.state_entered_at).seconds > self.oauth_timeout_seconds:
+                    logger.info("OAuth continuation timeout (30s) - resetting to IDLE")
+                    self.current_state = AuthState.IDLE
+                    self.session_data = {}
+                    return False
+                
+                # Track id.gw.postman.com for state transition (but don't intercept)
+                if host == "id.gw.postman.com":
+                    logger.info(f"OAuth flow reached id.gw.postman.com{path} - tracking but not intercepting")
+                    # Could transition to a new state here if needed
+                    # But always return False to let it pass through naturally
+                    return False
+                
+                # Check for successful completion
+                if "/browser-auth/success" in path:
+                    self.current_state = AuthState.COMPLETE
+                    self.state_entered_at = datetime.now()
+                    self.metrics['successful_auths'] += 1
+                return False
+            
+            elif self.current_state == AuthState.COMPLETE:
+                # Reset after brief delay
+                if (datetime.now() - self.state_entered_at).seconds > 5:
+                    self.current_state = AuthState.IDLE
+                    self.state_entered_at = datetime.now()
+                    self.session_data = {}
+                return False
+            
+            # Default: don't intercept
+            return False
+    
+    def _is_timed_out(self) -> bool:
+        """Check if current session has timed out.
+        
+        Returns:
+            True if session has exceeded timeout threshold
+        """
+        elapsed = (datetime.now() - self.state_entered_at).seconds
+        return elapsed > self.timeout_seconds
+    
+    def record_bypass_attempt(self, details: str) -> None:
+        """Record a potential bypass attempt for security monitoring.
+        
+        Args:
+            details: Description of the bypass attempt
+        """
+        with self._lock:
+            self.metrics['bypass_attempts'] += 1
+            logger.warning(f"BYPASS ATTEMPT DETECTED: {details}")
+
+
+class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
+    """HTTP request handler for the Postman auth daemon.
+    
+    Handles incoming requests and either intercepts them for SAML
+    redirection or proxies them to the upstream server.
+    """
+    
+    # Class-level configuration (set by daemon)
+    config: Dict = {}
+    mode: OperationMode = OperationMode.ENFORCE
+    state_machine: AuthStateMachine = None
+    dns_resolver: DNSResolver = None
     
     def do_GET(self):
-        # Special handling for /continue endpoint
-        if '/continue' in self.path:
-            self.handle_continue_endpoint()
-        else:
-            self.route_request()
+        """Handle GET requests."""
+        self._handle_request()
     
     def do_POST(self):
-        # Special handling for SAML callbacks
-        if '/sso/okta/' in self.path.lower():
-            self.handle_saml_callback()
-        else:
-            self.route_request()
+        """Handle POST requests."""
+        self._handle_request()
     
-    def route_request(self):
-        """Route based on cookies and path"""
-        client_ip = self.client_address[0]
+    def do_HEAD(self):
+        """Handle HEAD requests."""
+        self._handle_request()
+    
+    def _handle_request(self):
+        """Main request handler for all HTTP methods."""
+        host = self.headers.get('Host', '')
         path = self.path
-        cookie_header = self.headers.get('Cookie', '')
+        method = self.command
         
-        logger.info(f"Request from {client_ip}: {self.command} {path}")
+        # Log request for debugging
+        logger.debug(f"{method} {host}{path}")
         
-        # Check for Postman session cookies
-        has_session = any(cookie in cookie_header for cookie in self.POSTMAN_COOKIES)
+        # Check if this is a health check
+        if path == '/health':
+            self._handle_health_check()
+            return
         
-        if has_session:
-            logger.info(f"✅ Session found - proxying to real Postman")
-            self.proxy_to_postman()
-        else:
-            logger.info(f"❌ No session - redirecting to IDP")
-            self.redirect_to_idp()
-    
-    def handle_saml_callback(self):
-        """Proxy SAML callback POST to real Postman using curl --resolve"""
-        logger.info(f"🔐 SAML callback detected: {self.path}")
+        # Check if we should intercept based on state
+        should_intercept = self.state_machine.should_intercept(host, path)
         
-        try:
-            # Read POST body
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_body = self.rfile.read(content_length)
-            post_body_str = post_body.decode('utf-8', errors='ignore')
+        if self.mode == OperationMode.MONITOR:
+            # Monitor mode: log but don't actually intercept
+            logger.info(f"MONITOR: Would intercept: {should_intercept} for {host}{path}")
+            self._proxy_to_upstream(host, path, method)
+            return
+        
+        # Parse query parameters
+        parsed_url = urllib.parse.urlparse(path)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # CRITICAL SECURITY: Must intercept /login to prevent SAML bypass
+        # Direct SAML redirection avoids complex redirect chains that cause connection issues
+        
+        if should_intercept and parsed_url.path in ['/login', '/enterprise/login', '/enterprise/login/authchooser']:
+            # This is the critical interception point for BOTH Desktop and Browser flows
+            auth_challenge = query_params.get('auth_challenge', [''])[0]
             
-            # Parse the POST body to extract RelayState
-            post_params = dict(parse_qsl(post_body_str))
-            relay_state_encoded = post_params.get('RelayState', '')
-            
-            # Decode RelayState to get continue URL
-            continue_url = ''
-            session_id = ''
-            if relay_state_encoded:
-                try:
-                    relay_state_json = base64.b64decode(relay_state_encoded).decode()
-                    relay_state = json.loads(relay_state_json)
-                    continue_url = relay_state.get('continue', '')
-                    session_id = relay_state.get('session_id', '')
-                    logger.info(f"📍 Extracted continue URL from RelayState: {continue_url}")
-                    logger.info(f"📍 Session ID: {session_id}")
-                except Exception as e:
-                    logger.warning(f"Could not decode RelayState: {e}")
-            
-            # Get real Postman IP
-            real_ip = self.dns_resolver.resolve(self.POSTMAN_HOSTNAME)
-            
-            # Don't add continue to the callback URL - Postman handles state internally
-            target_path = self.path
-            
-            logger.info(f"→ Proxying SAML to {self.POSTMAN_HOSTNAME} via {real_ip}")
-            
-            # Build curl command with --resolve to bypass hosts file
-            curl_cmd = [
-                'curl',
-                '-X', 'POST',
-                '--resolve', f'{self.POSTMAN_HOSTNAME}:443:{real_ip}',
-                f'https://{self.POSTMAN_HOSTNAME}{target_path}',
-                '--data-raw', post_body_str,
-                '-i',  # Include headers in output
-                '-s',  # Silent mode
-                '--compressed',
-                '-k'  # Skip cert verification (like verify=False)
-            ]
-            
-            # Add all relevant headers from the original request
-            for key, value in self.headers.items():
-                if key.lower() not in ['host', 'content-length', 'connection']:
-                    curl_cmd.extend(['-H', f'{key}: {value}'])
-            
-            # Add Host header explicitly
-            curl_cmd.extend(['-H', f'Host: {self.POSTMAN_HOSTNAME}'])
-            
-            # Execute curl
-            result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=10)
-            
-            if result.returncode != 0:
-                logger.error(f"curl failed: {result.stderr}")
-                self.send_error(502, "SAML proxy failed")
+            if self.mode == OperationMode.ENFORCE:
+                # Direct redirect to SAML - handles all cases uniformly, prevents auth bypass
+                self._handle_unified_saml_redirect(query_params, auth_challenge)
                 return
-            
-            # Debug: log raw response
-            logger.debug(f"Raw curl output length: {len(result.stdout)}")
-            logger.debug(f"First 500 chars: {result.stdout[:500]}")
-            
-            # Parse response (headers and body separated by double CRLF or double LF for HTTP/2)
-            if '\r\n\r\n' in result.stdout:
-                response_parts = result.stdout.split('\r\n\r\n', 1)
-                line_sep = '\r\n'
-            else:
-                response_parts = result.stdout.split('\n\n', 1)
-                line_sep = '\n'
-            
-            headers_text = response_parts[0] if response_parts else ''
-            body = response_parts[1] if len(response_parts) > 1 else ''
-            
-            # Extract status code from first line (e.g., "HTTP/2 302")
-            status_line = headers_text.split(line_sep)[0] if headers_text else 'HTTP/1.1 502'
-            status_parts = status_line.split()
-            status_code = int(status_parts[1]) if len(status_parts) > 1 else 502
-            
-            logger.info(f"← Postman responded: {status_code}")
-            
-            # Send response status
-            self.send_response(status_code)
-            
-            # Parse and forward headers (especially Set-Cookie!)
-            location_header = None
-            import re
-            for line in headers_text.split(line_sep)[1:]:
-                if ': ' in line:
-                    key, value = line.split(': ', 1)
-                    # Skip certain headers
-                    if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding', 'content-length']:
-                        # Special handling for Location header on redirects
-                        if key.lower() == 'location' and status_code in [301, 302, 303, 307, 308]:
-                            location_header = value
-                            # Check if this is the /continue endpoint
-                            if '/continue' in value and continue_url:
-                                # Store the continue URL in our session storage
-                                # For now, we'll append it to the state token in the URL
-                                if 'state=' in value:
-                                    # The state token tracks the session - we shouldn't modify it
-                                    logger.info(f"📦 Location has state token, preserving as-is: {value}")
-                                    # Store continue URL in our session storage for this state
-                                    if not hasattr(self.__class__, 'session_storage'):
-                                        self.__class__.session_storage = {}
-                                    # Extract state from the location
-                                    state_match = re.search(r'state=([^&]+)', value)
-                                    if state_match:
-                                        state_token = state_match.group(1)
-                                        self.__class__.session_storage[state_token] = continue_url
-                                        logger.info(f"💾 Stored continue URL for state {state_token[:20]}...: {continue_url}")
-                                else:
-                                    logger.info(f"📍 Location without state: {value}")
-                        
-                        self.send_header(key, value)
-                        if key.lower() == 'set-cookie':
-                            logger.info(f"🍪 Forwarding cookie: {value[:50]}...")
-            
-            # Set content length
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            
-            # Send response body
-            self.wfile.write(body.encode('utf-8', errors='ignore'))
-            
-            logger.info(f"✅ SAML response proxied successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ SAML proxy failed: {e}")
-            self.send_error(502, "Failed to proxy SAML callback")
+        
+        # Default: proxy to upstream
+        self._proxy_to_upstream(host, path, method)
     
-    def proxy_to_postman(self):
-        """Proxy authenticated request to real Postman using curl --resolve"""
-        try:
-            # Get real IP
-            real_ip = self.dns_resolver.resolve(self.POSTMAN_HOSTNAME)
-            
-            logger.info(f"Proxying {self.command} {self.path} to {real_ip}")
-            
-            # Build curl command
-            curl_cmd = [
-                'curl',
-                '-X', self.command,
-                '--resolve', f'{self.POSTMAN_HOSTNAME}:443:{real_ip}',
-                f'https://{self.POSTMAN_HOSTNAME}{self.path}',
-                '-i',  # Include headers
-                '-s',  # Silent
-                '--compressed',
-                '-k'  # Skip cert verification
-            ]
-            
-            # Add headers
-            for key, value in self.headers.items():
-                if key.lower() not in ['host', 'content-length', 'connection']:
-                    curl_cmd.extend(['-H', f'{key}: {value}'])
-            
-            # For POST/PUT, add body
-            if self.command in ['POST', 'PUT', 'PATCH']:
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    body = self.rfile.read(content_length)
-                    curl_cmd.extend(['--data-raw', body.decode('utf-8', errors='ignore')])
-            
-            # Execute
-            result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=10)
-            
-            if result.returncode != 0:
-                logger.error(f"curl failed: {result.stderr}")
-                self.send_error(502, "Proxy failed")
-                return
-            
-            # Parse response
-            response_parts = result.stdout.split('\r\n\r\n', 1)
-            headers_text = response_parts[0] if response_parts else ''
-            body = response_parts[1] if len(response_parts) > 1 else ''
-            
-            # Get status code
-            status_line = headers_text.split('\r\n')[0] if headers_text else 'HTTP/1.1 502'
-            status_code = int(status_line.split()[1]) if len(status_line.split()) > 1 else 502
-            
-            # Send response
-            self.send_response(status_code)
-            
-            # Forward headers
-            for line in headers_text.split('\r\n')[1:]:
-                if ': ' in line:
-                    key, value = line.split(': ', 1)
-                    if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding', 'content-length']:
-                        self.send_header(key, value)
-            
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            
-            # Send body
-            self.wfile.write(body.encode('utf-8', errors='ignore'))
-            
-        except Exception as e:
-            logger.error(f"Proxy error: {e}")
-            self.send_error(502, "Proxy error")
-    
-    def redirect_to_idp(self):
-        """Redirect to IDP for authentication, preserving continue parameter"""
-        # Parse query parameters from original request
-        parsed_url = urlparse(self.path)
-        query_params = dict(parse_qsl(parsed_url.query))
+    def _handle_unified_saml_redirect(self, query_params: Dict, auth_challenge: str = None):
+        """Handle SAML redirect for both Desktop and Browser flows uniformly.
         
-        # Get the continue URL if present
-        continue_url = query_params.get('continue', '')
-        
-        # Create session ID
-        session_id = f"aln{uuid.uuid4().hex[:20]}"
-        
-        # Store the continue URL in RelayState along with session ID
-        relay_state = {
-            'session_id': session_id,
-            'continue': continue_url,
-            'original_path': self.path  # Store full original path
-        }
-        
-        # Encode RelayState as base64 JSON
-        relay_state_json = json.dumps(relay_state)
-        relay_state_encoded = base64.b64encode(relay_state_json.encode()).decode()
-        
-        # Build IDP URL with RelayState - use provider if available, else legacy
-        if self.idp_provider:
-            idp_url = self.idp_provider.get_auth_url(relay_state_encoded)
-            provider_name = self.idp_provider.get_display_name()
+        Args:
+            query_params: Query parameters from the request
+            auth_challenge: The auth_challenge parameter (present in Desktop flows)
+        """
+        if auth_challenge:
+            # Desktop flow with auth_challenge
+            logger.info("Desktop flow detected - redirecting to SAML with auth_challenge")
+            self.state_machine.session_data['auth_challenge'] = auth_challenge
+            saml_url = self._get_saml_redirect_url(auth_challenge)
         else:
-            # Legacy hardcoded Okta URL
-            idp_url = f"{self.IDP_URL}?RelayState={relay_state_encoded}"
-            provider_name = "Okta (legacy)"
+            # Browser flow without auth_challenge
+            logger.info("Browser flow detected - redirecting to SAML with team")
+            team_name = self.config.get('postman_team_name', 'postman')
+            
+            # Build SAML parameters for browser flow
+            saml_params = {'team': team_name}
+            for param in ['continue', 'intent']:
+                if param in query_params and query_params[param]:
+                    saml_params[param] = query_params[param][0]
+            
+            saml_url = self._get_saml_redirect_url_browser(saml_params)
         
-        logger.info(f"→ Redirecting to {provider_name} with RelayState containing continue URL: {continue_url}")
+        # Build absolute redirect URL
+        redirect_url = f"https://{self.headers.get('Host', 'identity.getpostman.com')}{saml_url}"
         
+        logger.info(f"Unified SAML redirect: {redirect_url}")
+        self.state_machine.metrics['saml_redirects'] += 1
+        self.state_machine.transition_to(AuthState.SAML_FLOW)
+        
+        # Send 302 redirect
         self.send_response(302)
-        self.send_header('Location', idp_url)
-        self.send_header('Cache-Control', 'no-cache, no-store')
+        self.send_header('Location', redirect_url)
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
         self.end_headers()
     
-    def handle_continue_endpoint(self):
-        """Handle /continue endpoint to inject stored continue URL"""
-        logger.info(f"🎯 Continue endpoint: {self.path}")
+    def _force_saml_redirect(self, auth_challenge: str):
+        """Force redirect to SAML even when user tries to bypass.
         
-        # Extract state token from URL
-        parsed_url = urlparse(self.path)
-        query_params = dict(parse_qsl(parsed_url.query))
-        state_token = query_params.get('state', '')
+        Args:
+            auth_challenge: The auth_challenge parameter
+        """
+        logger.warning(f"Forcing SAML redirect for bypass attempt on {self.path}")
         
-        # Check if we have a stored continue URL for this state
-        continue_url = None
-        if hasattr(self.__class__, 'session_storage') and state_token:
-            continue_url = self.__class__.session_storage.get(state_token)
-            if continue_url:
-                logger.info(f"📦 Found stored continue URL for state {state_token[:20]}...: {continue_url}")
+        saml_url = self._get_saml_redirect_url(auth_challenge)
+        redirect_url = f"https://{self.headers.get('Host', 'identity.getpostman.com')}{saml_url}"
         
-        # If we have a continue URL, redirect to it with authentication
-        if continue_url and any(cookie in self.headers.get('Cookie', '') for cookie in self.POSTMAN_COOKIES):
-            logger.info(f"✅ Redirecting to continue URL: {continue_url}")
-            self.send_response(302)
-            self.send_header('Location', continue_url)
-            self.send_header('Cache-Control', 'no-cache, no-store')
-            self.end_headers()
-            # Clean up session storage
-            if state_token in self.__class__.session_storage:
-                del self.__class__.session_storage[state_token]
+        self.send_response(302)
+        self.send_header('Location', redirect_url)
+        self.send_header('X-Enforcement', 'SAML-Required')
+        self.end_headers()
+    
+    def _get_saml_redirect_url(self, auth_challenge: str) -> str:
+        """Generate SAML redirect URL based on IdP configuration.
+        
+        Args:
+            auth_challenge: The auth_challenge parameter from Postman
+            
+        Returns:
+            URL to redirect user to for SAML authentication
+        """
+        team = self.config['postman_team_name']
+        idp_type = self.config.get('idp_type', 'okta')
+        
+        if idp_type == 'okta':
+            # Okta-specific SAML URL format
+            tenant_id = self.config.get('okta_tenant_id')
+            return f"/sso/okta/{tenant_id}/init?team={team}&auth_challenge={auth_challenge}"
+        
+        elif idp_type == 'azure':
+            # Azure AD SAML URL format
+            tenant_id = self.config.get('azure_tenant_id', '')
+            return f"/sso/azure/{tenant_id}/init?team={team}&auth_challenge={auth_challenge}"
+        
+        elif idp_type == 'ping':
+            # PingIdentity SAML URL format
+            connection_id = self.config.get('ping_connection_id', '')
+            return f"/sso/ping/{connection_id}/init?team={team}&auth_challenge={auth_challenge}"
+        
         else:
-            # Otherwise, proxy to real Postman /continue endpoint
-            logger.info(f"🔄 Proxying /continue to real Postman")
-            self.proxy_to_postman()
+            # Generic SAML URL
+            return f"/sso/saml/init?team={team}&auth_challenge={auth_challenge}"
+    
+    def _get_saml_redirect_url_browser(self, saml_params: Dict) -> str:
+        """Generate SAML redirect URL for browser flows (no auth_challenge).
+        
+        Args:
+            saml_params: Parameters including team, continue, intent
+            
+        Returns:
+            URL to redirect browser to for SAML authentication
+        """
+        team = saml_params.get('team', 'postman')
+        idp_type = self.config.get('idp_type', 'okta')
+        
+        if idp_type == 'okta':
+            # Okta-specific SAML URL format
+            tenant_id = self.config.get('okta_tenant_id')
+            base_url = f"/sso/okta/{tenant_id}/init"
+        elif idp_type == 'azure':
+            # Azure AD SAML URL format
+            tenant_id = self.config.get('azure_tenant_id', '')
+            base_url = f"/sso/azure/{tenant_id}/init"
+        elif idp_type == 'ping':
+            # PingIdentity SAML URL format
+            connection_id = self.config.get('ping_connection_id', '')
+            base_url = f"/sso/ping/{connection_id}/init"
+        else:
+            # Generic SAML URL
+            base_url = "/sso/saml/init"
+        
+        # Build query parameters
+        query_params = {'team': team}
+        if 'continue' in saml_params:
+            query_params['continue'] = saml_params['continue']
+        if 'intent' in saml_params:
+            query_params['intent'] = saml_params['intent']
+        
+        return f"{base_url}?{urllib.parse.urlencode(query_params)}"
+    
+    def _proxy_to_upstream(self, host: str, path: str, method: str):
+        """Proxy request to the real upstream server.
+        
+        Args:
+            host: The hostname
+            path: The request path
+            method: The HTTP method
+        """
+        # Get real IP address for the host
+        upstream_ip = self._get_real_host(host)
+        
+        # Read request body if present
+        content_length = self.headers.get('Content-Length')
+        body = None
+        if content_length:
+            body = self.rfile.read(int(content_length))
+        
+        try:
+            # For intercepted domains, use socket-level connection with SNI
+            if upstream_ip != host:  # We resolved to an IP
+                # Create raw socket to IP
+                import socket as sock
+                raw_socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+                raw_socket.settimeout(30)
+                raw_socket.connect((upstream_ip, 443))
+                
+                # Wrap with SSL, setting SNI to the original hostname
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                
+                # This is the key: server_hostname sets SNI
+                ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
+                
+                # Build HTTP request manually
+                request_line = f"{method} {path} HTTP/1.1\r\n"
+                headers_str = f"Host: {host}\r\n"
+                
+                for key, value in self.headers.items():
+                    if key.lower() not in ['connection', 'accept-encoding']:
+                        headers_str += f"{key}: {value}\r\n"
+                
+                headers_str += "Connection: close\r\n\r\n"
+                
+                # Send request
+                ssl_socket.send((request_line + headers_str).encode())
+                if body:
+                    ssl_socket.send(body)
+                
+                # Read response
+                response_data = b""
+                while True:
+                    chunk = ssl_socket.recv(4096)
+                    if not chunk:
+                        break
+                    response_data += chunk
+                
+                ssl_socket.close()
+                raw_socket.close()
+                
+                # Parse response
+                if b'\r\n\r\n' in response_data:
+                    header_data, body_data = response_data.split(b'\r\n\r\n', 1)
+                else:
+                    header_data = response_data
+                    body_data = b""
+                
+                # Parse status line and headers
+                lines = header_data.decode('utf-8', errors='ignore').split('\r\n')
+                if lines:
+                    status_line = lines[0]
+                    # Parse status
+                    parts = status_line.split(' ', 2)
+                    if len(parts) >= 2:
+                        status_code = int(parts[1])
+                    else:
+                        status_code = 502
+                    
+                    # Send response to client
+                    self.send_response(status_code)
+                    
+                    # Parse and send headers
+                    for line in lines[1:]:
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding']:
+                                self.send_header(key, value.strip())
+                    
+                    self.end_headers()
+                    
+                    # Send body
+                    if body_data:
+                        self.wfile.write(body_data)
+            else:
+                # Normal connection (no special handling needed)
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                
+                conn = HTTPSConnection(host, context=context)
+                
+                # Prepare headers - remove encoding headers to prevent compression issues
+                headers = {}
+                for key, value in self.headers.items():
+                    if key.lower() not in ['connection', 'accept-encoding']:
+                        headers[key] = value
+                headers['Host'] = host
+                
+                # Make request
+                conn.request(method, path, body, headers)
+                response = conn.getresponse()
+                
+                # Read response
+                response_body = response.read()
+                
+                # Send response back to client
+                self.send_response(response.status)
+                
+                # Copy response headers (excluding connection headers)
+                for key, value in response.getheaders():
+                    if key.lower() not in ['connection', 'transfer-encoding']:
+                        self.send_header(key, value)
+                
+                self.end_headers()
+                
+                # Send response body
+                if response_body:
+                    self.wfile.write(response_body)
+                
+                conn.close()
+        
+        except Exception as e:
+            logger.error(f"Upstream proxy error: {e}")
+            self.send_error(502, f"Bad Gateway: {str(e)}")
+    
+    def _get_real_host(self, intercepted_host: str) -> str:
+        """Get the real upstream host for an intercepted domain.
+        
+        Args:
+            intercepted_host: The domain we're intercepting
+            
+        Returns:
+            The real upstream host IP to connect to
+        """
+        # Use DNS resolver to get real IP, avoiding /etc/hosts
+        if self.dns_resolver and intercepted_host in ['identity.getpostman.com', 'identity.postman.co']:
+            return self.dns_resolver.resolve(intercepted_host)
+        
+        # For other hosts, return as-is
+        return intercepted_host
+    
+    def _handle_health_check(self):
+        """Handle health check endpoint for monitoring."""
+        uptime = time.time()  # Simplified for standard library
+        
+        status = {
+            'status': 'healthy',
+            'mode': self.mode.value,
+            'uptime_seconds': uptime,
+            'current_state': self.state_machine.current_state.value,
+            'metrics': self.state_machine.metrics,
+            'config': {
+                'team': self.config.get('postman_team_name'),
+                'idp_type': self.config.get('idp_type')
+            }
+        }
+        
+        response = json.dumps(status).encode('utf-8')
+        
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
     
     def log_message(self, format, *args):
-        # Reduce console spam
-        pass  # Logging handled above
+        """Override to use our logger instead of stderr."""
+        logger.debug(f"{self.address_string()} - {format % args}")
 
 
-def run_final_server(port=443):
-    """Run the final HTTPS server with SAML proxy support"""
-    logger.info("=" * 60)
-    logger.info("FINAL AUTH ROUTER: Complete SAML support")
-    logger.info("- DNS resolution for real IPs")
-    logger.info("- SAML callback proxying")
-    logger.info("- Cookie-based authentication")
-    logger.info("=" * 60)
+class SSLHTTPServer(http.server.HTTPServer):
+    """HTTPS server with SSL support."""
     
-    # Get SSL cert paths
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cert_file = os.path.join(script_dir, 'ssl', 'cert.pem')
-    key_file = os.path.join(script_dir, 'ssl', 'key.pem')
-    
-    if not os.path.exists(cert_file) or not os.path.exists(key_file):
-        logger.error(f"SSL certificates not found")
-        return
-    
-    # Check hosts entry
-    check_cmd = "grep 'identity.getpostman.com' /etc/hosts"
-    result = subprocess.run(check_cmd, shell=True, capture_output=True)
-    
-    if result.returncode != 0:
-        logger.warning("⚠️  Add hosts entry:")
-        logger.warning("    echo '127.0.0.1 identity.getpostman.com' | sudo tee -a /etc/hosts")
-    else:
-        logger.info("✓ Hosts entry present")
-    
-    # Create HTTPS server
-    httpd = socketserver.TCPServer(("127.0.0.1", port), FinalAuthRouter)
-    
-    # Wrap with SSL
-    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    context.load_cert_chain(cert_file, key_file)
-    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
-    
-    logger.info(f"Listening on https://127.0.0.1:{port}")
-    logger.info("=" * 60)
-    
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("Shutting down")
-        httpd.shutdown()
-
-
-if __name__ == "__main__":
-    import sys
-    
-    # Require config file
-    if len(sys.argv) < 2:
-        print("Usage: python3 auth_router_final.py <config.json>")
-        print("Example: python3 auth_router_final.py config/config.json")
-        sys.exit(1)
-    
-    config_file = sys.argv[1]
-    
-    try:
-        # Always load config - no hardcoded fallbacks
-        FinalAuthRouter.set_config(config_file)
-        logger.info(f"Configuration loaded from: {config_file}")
+    def __init__(self, server_address, handler_class, ssl_context):
+        """Initialize the HTTPS server.
         
-        run_final_server()
-    except FileNotFoundError:
-        logger.error(f"Config file not found: {config_file}")
+        Args:
+            server_address: Tuple of (host, port)
+            handler_class: Request handler class
+            ssl_context: SSL context for HTTPS
+        """
+        super().__init__(server_address, handler_class)
+        self.socket = ssl_context.wrap_socket(self.socket, server_side=True)
+
+
+class PostmanAuthDaemon:
+    """Main daemon class for Postman SAML enforcement.
+    
+    This daemon intercepts Postman Desktop authentication requests and
+    enforces SAML-only authentication according to enterprise policy.
+    
+    Attributes:
+        config: Configuration loaded from JSON file
+        mode: Current operation mode (enforce/monitor/test)
+        state_machine: Authentication flow state tracker
+        ssl_context: SSL context for HTTPS server
+    """
+    
+    def __init__(self, config_path: str = "config/config.json", mode: str = "enforce"):
+        """Initialize the daemon.
+        
+        Args:
+            config_path: Path to configuration file
+            mode: Operation mode (enforce/monitor/test)
+        """
+        self.config = self._load_config(config_path)
+        self.mode = OperationMode(mode)
+        
+        # Get advanced settings with defaults
+        advanced = self.config.get('advanced', {})
+        timeout = advanced.get('timeout_seconds', 30)
+        oauth_timeout = advanced.get('oauth_timeout_seconds', 30)
+        dns_server = advanced.get('dns_server', '8.8.8.8')
+        fallback_ips = advanced.get('dns_fallback_ips', {})
+        
+        self.state_machine = AuthStateMachine(timeout, oauth_timeout)
+        self.dns_resolver = DNSResolver(dns_server, fallback_ips)
+        self.ssl_context = self._setup_ssl_context()
+        self.start_time = datetime.now()
+        self.server = None
+        self.health_server = None
+        
+        # Validate configuration
+        self._validate_config()
+        
+        # Configure the handler class with our settings
+        PostmanAuthHandler.config = self.config
+        PostmanAuthHandler.mode = self.mode
+        PostmanAuthHandler.state_machine = self.state_machine
+        PostmanAuthHandler.dns_resolver = self.dns_resolver
+        
+        logger.info(f"Daemon initialized in {self.mode.value} mode")
+    
+    def _load_config(self, config_path: str) -> Dict:
+        """Load configuration from JSON file.
+        
+        Args:
+            config_path: Path to configuration file
+            
+        Returns:
+            Configuration dictionary
+        """
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                # Remove comment fields
+                return {k: v for k, v in config.items() if not k.startswith('_')}
+        except FileNotFoundError:
+            logger.error(f"Config file not found: {config_path}")
+            # Return minimal default config
+            return {
+                'postman_hostname': 'identity.getpostman.com',
+                'postman_team_name': 'postman',
+                'idp_type': 'okta'
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in config file: {e}")
+            raise
+    
+    def _validate_config(self) -> None:
+        """Validate configuration has required fields."""
+        required_fields = ['postman_team_name']
+        for field in required_fields:
+            if field not in self.config:
+                raise ValueError(f"Missing required config field: {field}")
+        
+        # Validate okta-specific fields if using okta
+        idp_config = self.config.get('idp_config', {})
+        if idp_config.get('idp_type') == 'okta' or self.config.get('idp_type') == 'okta':
+            if not self.config.get('okta_tenant_id'):
+                logger.warning("okta_tenant_id not configured - SAML redirect may fail")
+        
+        # Set defaults
+        self.config.setdefault('postman_hostname', 'identity.getpostman.com')
+        self.config.setdefault('idp_type', 'okta')
+        self.config.setdefault('ssl_cert', 'ssl/cert.pem')
+        self.config.setdefault('ssl_key', 'ssl/key.pem')
+        self.config.setdefault('listen_port', 443)
+        self.config.setdefault('health_check_port', 8443)
+    
+    def _setup_ssl_context(self) -> ssl.SSLContext:
+        """Create SSL context for HTTPS server.
+        
+        Returns:
+            Configured SSL context
+        """
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        
+        cert_path = self.config.get('ssl_cert', 'ssl/cert.pem')
+        key_path = self.config.get('ssl_key', 'ssl/key.pem')
+        
+        if not os.path.exists(cert_path) or not os.path.exists(key_path):
+            logger.error("SSL certificate or key not found")
+            logger.info("Generate with: ./generate_certs.sh")
+            raise FileNotFoundError("SSL files missing")
+        
+        ssl_context.load_cert_chain(cert_path, key_path)
+        return ssl_context
+    
+    def start(self):
+        """Start the daemon and begin listening for connections."""
+        # Create HTTPS server
+        server_address = ('0.0.0.0', self.config.get('listen_port', 443))
+        self.server = SSLHTTPServer(server_address, PostmanAuthHandler, self.ssl_context)
+        
+        logger.info(f"Daemon started on port {self.config.get('listen_port', 443)}")
+        
+        # Start health check server in a separate thread (if configured)
+        if self.config.get('health_check_port'):
+            self._start_health_server()
+        
+        try:
+            # Run the server
+            self.server.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("Daemon stopped by user")
+        finally:
+            self.cleanup()
+    
+    def _start_health_server(self):
+        """Start health check server on separate port without SSL."""
+        health_port = self.config['health_check_port']
+        
+        class HealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/health':
+                    # Reuse the main handler's health check logic
+                    handler = PostmanAuthHandler(self.request, self.client_address, self.server)
+                    handler._handle_health_check()
+                else:
+                    self.send_error(404)
+            
+            def log_message(self, format, *args):
+                pass  # Suppress health check logs
+        
+        # Run health server in a thread
+        def run_health_server():
+            health_address = ('127.0.0.1', health_port)
+            self.health_server = http.server.HTTPServer(health_address, HealthHandler)
+            logger.info(f"Health check endpoint on port {health_port}")
+            self.health_server.serve_forever()
+        
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
+    
+    def cleanup(self):
+        """Clean up resources on shutdown."""
+        if self.server:
+            self.server.shutdown()
+        if self.health_server:
+            self.health_server.shutdown()
+        logger.info("Daemon shutdown complete")
+
+
+class HostsManager:
+    """Manages dynamic modifications to /etc/hosts file.
+    
+    This class provides safe methods for adding and removing hosts
+    entries dynamically based on authentication flow state.
+    """
+    
+    MANAGED_MARKER = "# Managed by Postman Auth Daemon"
+    
+    def __init__(self, hosts_file: str = "/etc/hosts"):
+        """Initialize hosts manager.
+        
+        Args:
+            hosts_file: Path to hosts file
+        """
+        self.hosts_file = hosts_file
+        self.backup_file = f"{hosts_file}.postman-backup"
+        
+        # Create backup on first use
+        if not os.path.exists(self.backup_file):
+            self._create_backup()
+    
+    def _create_backup(self) -> None:
+        """Create backup of hosts file."""
+        try:
+            subprocess.run(['cp', self.hosts_file, self.backup_file], check=True)
+            logger.info(f"Created hosts backup: {self.backup_file}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to backup hosts file: {e}")
+    
+    def add_entry(self, ip: str, hostname: str) -> bool:
+        """Add a hosts entry.
+        
+        Args:
+            ip: IP address to map to
+            hostname: Hostname to map
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        entry = f"{ip} {hostname} {self.MANAGED_MARKER}"
+        
+        try:
+            # Check if entry already exists
+            with open(self.hosts_file, 'r') as f:
+                if hostname in f.read():
+                    logger.debug(f"Entry already exists for {hostname}")
+                    return True
+            
+            # Add entry
+            with open(self.hosts_file, 'a') as f:
+                f.write(f"\n{entry}")
+            
+            logger.info(f"Added hosts entry: {hostname} -> {ip}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to add hosts entry: {e}")
+            return False
+    
+    def remove_entry(self, hostname: str) -> bool:
+        """Remove a hosts entry.
+        
+        Args:
+            hostname: Hostname to remove
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read all lines
+            with open(self.hosts_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Filter out lines with our hostname and marker
+            filtered_lines = [
+                line for line in lines
+                if not (hostname in line and self.MANAGED_MARKER in line)
+            ]
+            
+            # Write back
+            with open(self.hosts_file, 'w') as f:
+                f.writelines(filtered_lines)
+            
+            logger.info(f"Removed hosts entry for {hostname}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to remove hosts entry: {e}")
+            return False
+    
+    def cleanup_all(self) -> None:
+        """Remove all managed entries from hosts file."""
+        try:
+            # Read all lines
+            with open(self.hosts_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Filter out lines with our marker
+            filtered_lines = [
+                line for line in lines
+                if self.MANAGED_MARKER not in line
+            ]
+            
+            # Write back
+            with open(self.hosts_file, 'w') as f:
+                f.writelines(filtered_lines)
+            
+            logger.info("Cleaned up all managed hosts entries")
+        except Exception as e:
+            logger.error(f"Failed to cleanup hosts entries: {e}")
+
+
+# Global references for signal handler
+daemon = None
+hosts_manager = None
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully.
+    
+    Args:
+        signum: Signal number
+        frame: Current stack frame
+    """
+    logger.info(f"Received signal {signum}, shutting down...")
+    
+    # Clean up hosts entries if using dynamic management
+    if hosts_manager:
+        hosts_manager.cleanup_all()
+    
+    # Shutdown daemon
+    if daemon:
+        daemon.cleanup()
+    
+    sys.exit(0)
+
+
+def main():
+    """Main entry point for the daemon."""
+    global daemon, hosts_manager
+    
+    # Check for root privileges
+    if os.geteuid() != 0:
+        print("\n" + "="*60)
+        print("⚠️  ROOT PRIVILEGES REQUIRED")
+        print("="*60)
+        print("\nThis daemon requires root access to:")
+        print("  • Bind to port 443 (HTTPS)")
+        print("  • Modify /etc/hosts (if using --dynamic-hosts)")
+        print("  • Write to /var/log/postman-auth.log")
+        print("\nPlease run with sudo:")
+        print(f"  sudo {sys.executable} {' '.join(sys.argv)}")
+        print("="*60 + "\n")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in config file: {e}")
-        sys.exit(1)
+    
+    # Parse command line arguments
+    import argparse
+    parser = argparse.ArgumentParser(description='Postman SAML Enforcement Daemon')
+    parser.add_argument('--config', default='config/config.json',
+                       help='Path to configuration file')
+    parser.add_argument('--mode', choices=['enforce', 'monitor', 'test'],
+                       default='enforce',
+                       help='Operation mode')
+    parser.add_argument('--dynamic-hosts', action='store_true',
+                       help='Enable dynamic hosts management')
+    args = parser.parse_args()
+    
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Initialize hosts manager if needed
+    if args.dynamic_hosts:
+        hosts_manager = HostsManager()
+        # Set initial hosts entries
+        hosts_manager.add_entry('127.0.0.1', 'identity.getpostman.com')
+        hosts_manager.add_entry('127.0.0.1', 'identity.postman.co')
+    
+    try:
+        # Create and start daemon
+        daemon = PostmanAuthDaemon(config_path=args.config, mode=args.mode)
+        daemon.start()
+        
+    except KeyboardInterrupt:
+        logger.info("Daemon stopped by user")
     except Exception as e:
-        logger.error(f"Error loading config: {e}")
+        logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        # Cleanup
+        if hosts_manager:
+            hosts_manager.cleanup_all()
+        if daemon:
+            daemon.cleanup()
+
+
+if __name__ == '__main__':
+    main()

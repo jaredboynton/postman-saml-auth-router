@@ -43,15 +43,17 @@ if [ -f "$CERT_DIR/cert.pem" ] && [ -f "$CERT_DIR/key.pem" ]; then
     echo ""
 fi
 
-echo "Generating self-signed certificate for: $HOSTNAME"
+echo "Generating self-signed certificate with SAN for all Postman domains"
+echo "Using configuration: $CERT_DIR/cert.conf"
 echo "Valid for: $CERT_DAYS days"
 echo ""
 
-# Generate private key and certificate in one command
+# Generate private key and certificate using the configuration file
 openssl req -new -x509 -days $CERT_DAYS -nodes \
     -out "$CERT_DIR/cert.pem" \
     -keyout "$CERT_DIR/key.pem" \
-    -subj "/C=US/ST=California/L=San Francisco/O=Development/CN=$HOSTNAME" \
+    -config "$CERT_DIR/cert.conf" \
+    -extensions v3_req \
     2>/dev/null
 
 # Set appropriate permissions
