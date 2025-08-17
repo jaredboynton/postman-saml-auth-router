@@ -148,46 +148,62 @@ The daemon now includes a sophisticated state machine that handles both Web and 
 
 ### Prerequisites
 
-**System Requirements:**
-- Supported OS: macOS 10.15+, Windows 10+, Ubuntu 20.04+
-- Postman Desktop 9.0 or higher (for Desktop support)
-- Any modern browser (for Web support)
-- MDM solution (JAMF, Intune, SCCM, Workspace ONE)
+**Supported Platforms:**
+- macOS 10.15+ / Windows 10+ / Ubuntu 20.04+
+- Python 3.8 or higher
+- Administrative privileges
+
+**Enterprise Requirements:**
 - SAML 2.0 compatible IdP (Okta, Azure AD, Ping Identity, OneLogin)
-- Administrative privileges for initial setup
+- MDM solution for fleet deployment (JAMF, Intune, SCCM, Workspace ONE)
+- Postman Enterprise team with SAML configured
 
-**Configuration Requirements:**
-- Access to your IdP's SAML metadata
-- Ability to create SAML application in your IdP
-- MDM administrator access for deployment
+### Quick Start (3 Steps)
 
-### Quick Start Guide
+#### macOS / Linux
 
-**1. Configure your IdP settings:**
 ```bash
+# 1. Configure your IdP settings
 cp config/config.json.template config/config.json
-# Edit config/config.json with your values
+vi config/config.json  # Add your team name and IdP details
+
+# 2. Run complete setup
+sudo ./daemon_manager.sh setup
+
+# 3. Test authentication
+# Browser: https://postman.co
+# Desktop: Open Postman Desktop app
 ```
 
-**2. Set up and start the daemon:**
-```bash
-sudo ./daemon_manager.sh setup    # One-time setup
-sudo ./daemon_manager.sh start    # Start daemon
-```
+#### Windows
 
-**3. Test authentication:**
-- **Web**: Navigate to https://go.postman.co
-- **Desktop**: Open Postman Desktop app
-- Both will redirect to your SAML IdP
+```powershell
+# 1. Configure your IdP settings
+Copy-Item config\config.json.template config\config.json
+notepad config\config.json  # Add your team name and IdP details
+
+# 2. Run complete setup (as Administrator)
+.\daemon_manager.ps1 setup
+
+# 3. Test authentication
+# Browser: https://postman.co
+# Desktop: Open Postman Desktop app
+```
 
 ### Management Commands
 
+#### macOS / Linux
 ```bash
 sudo ./daemon_manager.sh status     # Check daemon status
 sudo ./daemon_manager.sh restart    # Restart daemon
-sudo ./daemon_manager.sh stop       # Stop daemon
-sudo ./daemon_manager.sh logs       # View logs
-sudo ./daemon_manager.sh trust-cert # Fix certificate trust issues
+sudo ./daemon_manager.sh cleanup    # Remove everything
+```
+
+#### Windows (Run as Administrator)
+```powershell
+.\daemon_manager.ps1 status     # Check daemon status
+.\daemon_manager.ps1 restart    # Restart daemon
+.\daemon_manager.ps1 cleanup    # Remove everything
 ```
 
 ## Configuration
@@ -232,59 +248,52 @@ Edit `config/config.json`:
 }
 ```
 
-## Path to Production
+## Enterprise Deployment
 
-This solution is designed to be **entirely MDM-based and infinitely scalable** - no corporate proxies, no network infrastructure changes, just MDM deployment to endpoints.
+### Deployment Overview
 
-### Required Resources
-- **People**: 1 MDM admin
-- **Infrastructure**: None (all local)
-- **Tools**: Existing MDM (JAMF/Intune/etc)
-- **Timeline**: 30 minutes to production
+**Timeline**: 30 minutes from start to production
+**Required**: 1 MDM administrator, no network changes
+**Scale**: Deploy to 10 or 10,000 devices identically
 
-### Enterprise Certificates
+### Using Enterprise Certificates
 
-Replace self-signed certificates with MDM-deployed certificates:
-- **JAMF**: Deploy certificate profile with identity.getpostman.com cert
-- **Intune/SCCM**: Deploy certificate via Configuration Profile
-- **Workspace ONE**: Push certificate to system keystore
+For production deployments, use enterprise-signed certificates instead of self-signed:
 
-**For Enterprise CA Configuration**: Instead of using self-signed certificates, generate a CSR for `identity.getpostman.com`, submit to your enterprise CA (Microsoft ADCS, Venafi, etc.), and deploy the resulting certificate chain via MDM. The daemon automatically uses certificates in `ssl/cert.pem` and `ssl/key.pem`.
+1. **Generate CSR** for `identity.getpostman.com` with required SANs
+2. **Submit to Enterprise CA** (Microsoft ADCS, Venafi, DigiCert, etc.)
+3. **Deploy via MDM** with the certificate chain
 
-### Platform-Specific Deployment
+The daemon automatically detects and uses certificates in:
+- **macOS/Linux**: `ssl/cert.pem` and `ssl/key.pem`
+- **Windows**: `ssl\cert.pem` or Windows Certificate Store
 
-Only two potential configs necessary (three if you count linux). No network configs, no network admins; the same team deploying the Postman Enterprise Application does this too.
+### MDM Deployment Scripts
 
-**macOS (JAMF)**
+#### JAMF (macOS)
 ```bash
-#!/bin/bash
-installer -pkg PostmanAuthRouter.pkg -target /
-
-/usr/bin/security add-trusted-cert -d -r trustRoot \
-  -k /Library/Keychains/System.keychain \
-  /path/to/identity.getpostman.com.cer
-
-cat > /Library/Application\ Support/Postman/AuthRouter/config.json <<EOF
-{
-  "postman_team_name": "$4",
-  "okta_tenant_id": "$5",
-  "idp_config": {
-    "idp_url": "$6",
-    "okta_app_id": "$7"
-  }
-}
-EOF
-
-launchctl load -w /Library/LaunchDaemons/com.postman.auth.router.plist
+# Deploy via JAMF policy
+sudo installer -pkg PostmanAuthRouter.pkg -target /
+sudo /usr/local/bin/postman/daemon_manager.sh setup
 ```
 
-**Windows (Intune/SCCM)**
-- Deploy as Windows Service via MSI package
-- Configure via registry or config file
+#### Intune (Windows)
+```powershell
+# Deploy via Intune PowerShell script
+# Use tools/deploy_intune.ps1 with your parameters
+.\deploy_intune.ps1 -PostmanTeamName "your-team" `
+                    -OktaTenantId "your-tenant" `
+                    -IdpUrl "https://your-idp.okta.com/app/..."
+```
 
-**Linux (Puppet/Ansible/Intune)**
-- Deploy as systemd service
-- Configure via /etc/postman-auth/config.json
+#### SCCM (Windows)
+```powershell
+# Deploy as SCCM Application
+# Use tools/deploy_sccm.ps1 in Application model
+.\deploy_sccm.ps1 -Mode Install
+```
+
+See `docs/WINDOWS_DEPLOYMENT.md` for detailed Windows deployment guidance.
 
 ### Enterprise Session Management
 
@@ -414,40 +423,30 @@ def route_request():
 
 ### Testing & Validation
 
-**Test Fresh Authentication (Web):**
-```bash
-# Clear sessions and test browser flow
-./fix_certificate_trust.sh  # Ensure certs are trusted
-# Navigate to https://go.postman.co
-# Should redirect to your IDP
-```
-
-**Test Fresh Authentication (Desktop):**
-```bash
-# Clear sessions and test Desktop app
-rm -rf ~/Library/Application\ Support/Postman/cookies
-# Open Postman Desktop
-# Should redirect to your IDP with auth_challenge
-```
+**Test Fresh Authentication:**
+1. Clear existing sessions (use `tools/clear_*_sessions` scripts)
+2. **Web**: Navigate to https://postman.co
+3. **Desktop**: Open Postman Desktop app
+4. Should redirect to your SAML IdP
 
 **Test SAML Flow:**
 ```bash
 # Open Browser DevTools > Network tab
 # Watch the redirect chain:
-# 1. go.postman.co → 401 (Web) or Desktop app launch
+# 1. postman.co → 401 (Web) or Desktop app launch
 # 2. Redirect to identity.getpostman.com/login
-# 3. Our daemon → Redirect to IDP (with or without auth_challenge)
+# 3. Our daemon → Redirect to IDP
 # 4. IDP auth → SAML callback
-# 5. OAuth continuation at id.gw.postman.com (tracked but not intercepted)
-# 6. Back to Postman with session
+# 5. Back to Postman with session
 ```
 
 ### Troubleshooting
 
+#### macOS / Linux
+
 **Certificate Issues**
 ```bash
-sudo ./fix_certificate_trust.sh  # Fix trust issues
-sudo ./generate_certs.sh         # Regenerate certificates
+sudo ./daemon_manager.sh cert    # Regenerate/trust certificates
 ```
 
 **Connection Refused**
@@ -460,41 +459,60 @@ sudo lsof -i :443                # Check port binding
 ```bash
 grep postman /etc/hosts          # Verify hosts entries
 sudo dscacheutil -flushcache     # Flush DNS cache (macOS)
+sudo systemctl restart systemd-resolved  # Flush DNS cache (Linux)
 ```
 
-**Session Not Persisting**
-- Check for Postman cookies: `postman.sid`, `legacy_sails.sid`, `pm.sid`
-- Verify in DevTools > Application > Cookies
-- Desktop: Check `~/Library/Application Support/Postman/cookies`
+#### Windows
 
-**Desktop-Specific Issues**
-- Ensure Desktop app version 9.0+
-- Check for `auth_challenge` parameter in logs
-- Verify OAuth continuation timeout (30 seconds default)
+**Certificate Issues**
+```powershell
+.\daemon_manager.ps1 cert        # Regenerate/trust certificates
+```
+
+**Connection Refused**
+```powershell
+.\daemon_manager.ps1 status      # Check daemon status
+netstat -an | findstr :443       # Check port binding
+```
+
+**DNS Not Resolving**
+```powershell
+type C:\Windows\System32\drivers\etc\hosts | findstr postman
+ipconfig /flushdns               # Flush DNS cache
+```
+
+#### All Platforms
+
+**Session Not Persisting**
+- Check for Postman cookies in browser DevTools > Application > Cookies
+- Clear all sessions using platform-specific scripts in `tools/`
+- Verify IdP configuration returns to correct callback URL
 
 ### Directory Structure
 
 ```
 postman_redirect_daemon/
 ├── README.md                      # This file
-├── daemon_manager.sh              # Main management script
-├── generate_certs.sh              # Certificate generation
-├── fix_certificate_trust.sh       # Trust repair utility
+├── daemon_manager.sh              # macOS/Linux management script
+├── daemon_manager.ps1             # Windows PowerShell management script
 ├── config/
 │   ├── config.json.template      # Configuration template
-│   └── config.json               # Your configuration
+│   └── config.json               # Your configuration (do not commit)
 ├── src/
 │   └── auth_router_final.py      # Main daemon with state machine
-├── ssl/                          # Certificates
-├── docs/                         # Detailed documentation
-│   ├── TECHNICAL.md
-│   ├── MDM_DEPLOYMENT_ANALYSIS.md
-│   ├── MDM_IMPLEMENTATION_PLAN.md
-│   └── AUTHENTICATION_FLOW.md
-├── tools/                        # Utility scripts
-│   ├── clear_mac_sessions.sh    # macOS session clearing
-│   └── clear_windows_sessions.ps1 # Windows session clearing
-└── archive/                      # Historical files
+├── ssl/
+│   ├── cert.conf                 # Certificate configuration
+│   └── .gitkeep                  # Ensures directory exists
+├── tools/
+│   ├── clear_mac_sessions.sh     # macOS session clearing
+│   ├── clear_windows_sessions.ps1 # Windows session clearing
+│   ├── deploy_intune.ps1         # Intune deployment template
+│   └── deploy_sccm.ps1           # SCCM deployment template
+├── docs/
+│   ├── TECHNICAL.md              # Technical implementation details
+│   ├── WINDOWS_DEPLOYMENT.md     # Windows-specific deployment guide
+│   └── MDM_DEPLOYMENT_ANALYSIS.md # MDM deployment analysis
+└── archive/                       # Historical/reference files
 ```
 
 ## Appendix: Alternative Approaches
