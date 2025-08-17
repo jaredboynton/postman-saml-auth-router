@@ -295,8 +295,8 @@ Organizations can instantly terminate all existing Postman sessions across their
 - Security incident response
 
 **Included Session Management Scripts:**
-- `clear_mac_sessions.sh` - Clears all Postman sessions on macOS
-- `clear_windows_sessions.ps1` - Clears all Postman sessions on Windows
+- `tools/clear_mac_sessions.sh` - Clears all Postman sessions on macOS
+- `tools/clear_windows_sessions.ps1` - Clears all Postman sessions on Windows
 
 These scripts clear sessions from:
 - All major browsers (Chrome, Firefox, Safari, Edge)
@@ -313,7 +313,7 @@ These scripts clear sessions from:
 jamf policy -trigger clear_postman_sessions
 
 # Or execute directly via JAMF script payload
-/usr/local/bin/clear_mac_sessions.sh
+/usr/local/bin/postman/tools/clear_mac_sessions.sh
 ```
 
 **Windows Deployment (Intune/SCCM)**
@@ -322,7 +322,7 @@ jamf policy -trigger clear_postman_sessions
 # Upload to Intune > Devices > Scripts > Add
 
 # Example Intune PowerShell deployment
-Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\ProgramData\Postman\clear_windows_sessions.ps1"
+Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\ProgramData\Postman\tools\clear_windows_sessions.ps1"
 
 # Or deploy via SCCM package
 ```
@@ -330,7 +330,7 @@ Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\Pro
 **Automated Deployment Examples:**
 
 *JAMF (macOS):*
-1. Upload `clear_mac_sessions.sh` to JAMF Admin
+1. Upload `tools/clear_mac_sessions.sh` to JAMF Admin
 2. Create Smart Computer Group for target devices
 3. Create Policy with script payload
 4. Set trigger: `clear_postman_sessions`
@@ -338,7 +338,7 @@ Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\Pro
 
 *Intune (Windows):*
 1. Navigate to Devices > Scripts > Add
-2. Upload `clear_windows_sessions.ps1`
+2. Upload `tools/clear_windows_sessions.ps1`
 3. Configure: Run as System, No user context needed
 4. Assign to device groups
 5. Execute on-demand or scheduled
@@ -474,24 +474,25 @@ sudo dscacheutil -flushcache     # Flush DNS cache (macOS)
 
 ```
 postman_redirect_daemon/
-├── README.md                  # This file
-├── daemon_manager.sh          # Main management script
-├── generate_certs.sh          # Certificate generation
-├── fix_certificate_trust.sh   # Trust repair utility
+├── README.md                      # This file
+├── daemon_manager.sh              # Main management script
+├── generate_certs.sh              # Certificate generation
+├── fix_certificate_trust.sh       # Trust repair utility
 ├── config/
-│   ├── config.json.template  # Configuration template
-│   └── config.json           # Your configuration
+│   ├── config.json.template      # Configuration template
+│   └── config.json               # Your configuration
 ├── src/
-│   └── auth_router_final.py  # Main daemon with state machine
-├── ssl/                      # Certificates
-├── docs/                     # Detailed documentation
+│   └── auth_router_final.py      # Main daemon with state machine
+├── ssl/                          # Certificates
+├── docs/                         # Detailed documentation
 │   ├── TECHNICAL.md
 │   ├── MDM_DEPLOYMENT_ANALYSIS.md
 │   ├── MDM_IMPLEMENTATION_PLAN.md
 │   └── AUTHENTICATION_FLOW.md
-├── tools/                    # Utility scripts
-│   └── analyze_har.py
-└── archive/                  # Historical files
+├── tools/                        # Utility scripts
+│   ├── clear_mac_sessions.sh    # macOS session clearing
+│   └── clear_windows_sessions.ps1 # Windows session clearing
+└── archive/                      # Historical files
 ```
 
 ## Appendix: Alternative Approaches
