@@ -16,8 +16,7 @@
     "dns_server": "8.8.8.8",
     "dns_fallback_ips": {
       "identity.getpostman.com": "104.18.36.161",
-      "identity.postman.co": "104.18.37.186",
-      "identity.postman.com": "104.18.37.161"
+      "identity.postman.co": "104.18.37.186"
     },
     "log_file": "/var/log/postman-auth.log",
     "timeout_seconds": 30,

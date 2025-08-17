@@ -72,6 +72,13 @@ case "$1" in
         fi
         ;;
         
+    logs)
+        echo -e "${GREEN}Showing daemon logs...${NC}"
+        echo "Press Ctrl+C to stop viewing logs"
+        echo ""
+        tail -f /var/log/postman-auth.log
+        ;;
+        
     generate-cert)
         echo -e "${GREEN}Generating SSL certificate...${NC}"
         

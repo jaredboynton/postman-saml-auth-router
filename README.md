@@ -86,8 +86,10 @@ State Machine Tracks Authentication Flow
          ↓
 Validates Postman session cookies
    ├─ No valid session → Redirect to Corporate IDP (SAML)
-   └─ Valid session → Proxy to real Postman servers
+   └─ Valid session → Proxy to real Postman servers (with SNI)
 ```
+
+**Technical Note:** The daemon uses SNI (Server Name Indication) when proxying SSL connections to ensure proper certificate validation with upstream servers.
 
 ### Enhanced State Machine for Desktop Support
 
