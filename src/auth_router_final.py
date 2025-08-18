@@ -846,6 +846,18 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         
         return f"{base_url}?{urllib.parse.urlencode(query_params)}"
     
+    def _get_upstream_ssl_context(self):
+        """Get SSL context for upstream connections."""
+        context = ssl.create_default_context()
+        if self.config.get('advanced', {}).get('allow_insecure_upstream', False):
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            logger.warning("Using insecure upstream connection (allow_insecure_upstream=true)")
+        else:
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+        return context
+    
     def _proxy_to_upstream(self, host: str, path: str, method: str):
         """Proxy request to the real upstream server.
         
@@ -873,16 +885,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                 raw_socket.connect((upstream_ip, 443))
                 
                 # Wrap with SSL, setting SNI to the original hostname
-                context = ssl.create_default_context()
-                
-                # Check if insecure upstream is allowed (for testing/debugging)
-                if self.config.get('advanced', {}).get('allow_insecure_upstream', False):
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                    logger.warning("Using insecure upstream connection (allow_insecure_upstream=true)")
-                else:
-                    context.check_hostname = True
-                    context.verify_mode = ssl.CERT_REQUIRED
+                context = self._get_upstream_ssl_context()
                 
                 # This is the key: server_hostname sets SNI
                 ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
@@ -948,17 +951,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                         self.wfile.write(body_data)
             else:
                 # Normal connection (no special handling needed)
-                context = ssl.create_default_context()
-                
-                # Check if insecure upstream is allowed (for testing/debugging)
-                if self.config.get('advanced', {}).get('allow_insecure_upstream', False):
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                    logger.warning("Using insecure upstream connection (allow_insecure_upstream=true)")
-                else:
-                    context.check_hostname = True
-                    context.verify_mode = ssl.CERT_REQUIRED
-                
+                context = self._get_upstream_ssl_context()
                 conn = HTTPSConnection(host, context=context)
                 
                 # Prepare headers - remove encoding headers to prevent compression issues
