@@ -397,6 +397,7 @@ class AuthStateMachine:
             # Reset session data when returning to IDLE
             if new_state == AuthState.IDLE:
                 self.session_data = {}
+                logger.debug("Session data cleared on transition to IDLE")
     
     def should_intercept(self, host: str, path: str) -> bool:
         """Determine if a request should be intercepted based on current state.
@@ -422,6 +423,12 @@ class AuthStateMachine:
                     self.current_state = AuthState.AUTH_INIT
                     self.state_entered_at = datetime.now()
                     self.metrics['auth_attempts'] += 1
+                    
+                    # Track if this is a legitimate Desktop flow starting with /client/login
+                    if "/client" in path:
+                        self.session_data['desktop_flow_initiated'] = True
+                        logger.debug("Desktop flow initiated via /client/login")
+                    
                     # For browser flows starting directly at /login, intercept immediately
                     if path.startswith("/login") and "/client" not in path:
                         return True  # Intercept browser login
@@ -543,6 +550,31 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             self._handle_health_check()
             return
         
+        # Parse query parameters
+        parsed_url = urllib.parse.urlparse(path)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Check for bypass attempts BEFORE state machine logic
+        if host == "identity.getpostman.com" and parsed_url.path.startswith('/login'):
+            if self._is_bypass_attempt(query_params):
+                logger.warning(f"BYPASS ATTEMPT BLOCKED: {self.path}")
+                self.state_machine.record_bypass_attempt(f"Blocked: {query_params}")
+                
+                # Force clean SAML redirect without dangerous params
+                if self.mode == OperationMode.ENFORCE:
+                    # For bypass attempts, strip ALL parameters including auth_challenge
+                    # We want a clean SAML redirect with no bypass vectors
+                    clean_params = {}
+                    # Only preserve continue URL if it's safe
+                    if 'continue' in query_params:
+                        continue_url = query_params['continue'][0] if query_params['continue'] else ''
+                        if self._is_safe_continue_url(continue_url):
+                            clean_params['continue'] = [continue_url]
+                    
+                    # NEVER pass auth_challenge from a bypass attempt
+                    self._handle_unified_saml_redirect(clean_params, None)
+                    return
+        
         # Check if we should intercept based on state
         should_intercept = self.state_machine.should_intercept(host, path)
         
@@ -551,10 +583,6 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             logger.info(f"MONITOR: Would intercept: {should_intercept} for {host}{path}")
             self._proxy_to_upstream(host, path, method)
             return
-        
-        # Parse query parameters
-        parsed_url = urllib.parse.urlparse(path)
-        query_params = urllib.parse.parse_qs(parsed_url.query)
         
         # CRITICAL SECURITY: Must intercept /login to prevent SAML bypass
         # Direct SAML redirection avoids complex redirect chains that cause connection issues
@@ -571,6 +599,127 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         # Default: proxy to upstream
         self._proxy_to_upstream(host, path, method)
     
+    def _is_bypass_attempt(self, query_params: Dict) -> bool:
+        """Detect known bypass patterns in query parameters.
+        
+        Args:
+            query_params: Parsed query parameters from the request
+            
+        Returns:
+            True if bypass attempt detected, False otherwise
+        """
+        # Block account switching attempts
+        if query_params.get('intent', [''])[0] == 'switch-account':
+            logger.warning("Bypass attempt detected: intent=switch-account")
+            return True
+        
+        # Block direct team selection without auth_challenge (Desktop flow marker)
+        if 'target_team' in query_params and 'auth_challenge' not in query_params:
+            logger.warning("Bypass attempt detected: target_team without auth_challenge")
+            return True
+        
+        # CRITICAL: Block auth_challenge if no Desktop flow in progress
+        # Legitimate Desktop flows MUST start with /client/login which sets desktop_flow_initiated
+        # Any auth_challenge without prior /client/login is a bypass attempt
+        if 'auth_challenge' in query_params:
+            # Check if this is part of a legitimate Desktop flow
+            desktop_flow_initiated = self.state_machine.session_data.get('desktop_flow_initiated', False)
+            
+            if not desktop_flow_initiated:
+                auth_challenge_preview = query_params['auth_challenge'][0][:20] if query_params['auth_challenge'] else 'empty'
+                logger.warning(f"Bypass attempt detected: auth_challenge without prior /client/login (challenge: {auth_challenge_preview}...)")
+                return True
+        
+        # Block suspicious parameter combinations
+        if 'force_auth' in query_params or 'skip_saml' in query_params:
+            logger.warning(f"Bypass attempt detected: suspicious params {list(query_params.keys())}")
+            return True
+        
+        return False
+    
+    def _sanitize_login_params(self, query_params: Dict) -> Dict:
+        """Remove potentially dangerous parameters from login requests.
+        
+        Only preserves parameters that are known to be safe and necessary
+        for the authentication flow.
+        
+        Args:
+            query_params: Raw query parameters from the request
+            
+        Returns:
+            Sanitized parameters safe for SAML redirect
+        """
+        safe_params = {}
+        
+        # Desktop flow: preserve auth_challenge
+        if 'auth_challenge' in query_params:
+            safe_params['auth_challenge'] = query_params['auth_challenge']
+            logger.debug("Preserved auth_challenge for Desktop flow")
+        
+        # Browser flow: validate and preserve continue URL if safe
+        if 'continue' in query_params:
+            continue_url = query_params['continue'][0] if query_params['continue'] else ''
+            if self._is_safe_continue_url(continue_url):
+                safe_params['continue'] = [continue_url]
+                logger.debug(f"Preserved safe continue URL: {continue_url}")
+            else:
+                logger.warning(f"Blocked unsafe continue URL: {continue_url}")
+        
+        # Log any parameters that were stripped
+        stripped_params = set(query_params.keys()) - set(safe_params.keys())
+        if stripped_params:
+            logger.info(f"Stripped potentially dangerous parameters: {stripped_params}")
+        
+        return safe_params
+    
+    def _is_safe_continue_url(self, url: str) -> bool:
+        """Validate that continue URL is safe and points to Postman domains.
+        
+        Args:
+            url: The continue URL to validate
+            
+        Returns:
+            True if URL is safe to use, False otherwise
+        """
+        if not url:
+            return False
+        
+        try:
+            parsed = urllib.parse.urlparse(url)
+            
+            # Only allow HTTPS
+            if parsed.scheme != 'https':
+                logger.warning(f"Blocked non-HTTPS continue URL: {url}")
+                return False
+            
+            # Only allow Postman domains
+            allowed_domains = [
+                'postman.co',
+                'postman.com', 
+                'getpostman.com',
+                'go.postman.co',
+                'app.postman.com',
+                'identity.postman.com',
+                'identity.postman.co',
+                'identity.getpostman.com'
+            ]
+            
+            # Check if hostname ends with any allowed domain
+            hostname = parsed.netloc.lower()
+            is_allowed = any(
+                hostname == domain or hostname.endswith('.' + domain) 
+                for domain in allowed_domains
+            )
+            
+            if not is_allowed:
+                logger.warning(f"Blocked continue URL to non-Postman domain: {hostname}")
+            
+            return is_allowed
+            
+        except Exception as e:
+            logger.error(f"Error validating continue URL: {e}")
+            return False
+    
     def _handle_unified_saml_redirect(self, query_params: Dict, auth_challenge: str = None):
         """Handle SAML redirect for both Desktop and Browser flows uniformly.
         
@@ -578,6 +727,9 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             query_params: Query parameters from the request
             auth_challenge: The auth_challenge parameter (present in Desktop flows)
         """
+        # Sanitize parameters to prevent bypass attempts
+        clean_params = self._sanitize_login_params(query_params)
+        
         if auth_challenge:
             # Desktop flow with auth_challenge
             logger.info("Desktop flow detected - redirecting to SAML with auth_challenge")
@@ -588,11 +740,11 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             logger.info("Browser flow detected - redirecting to SAML with team")
             team_name = self.config.get('postman_team_name', 'postman')
             
-            # Extract browser flow parameters
-            continue_url = query_params.get('continue', [None])[0]
-            intent = query_params.get('intent', [None])[0]
+            # Use sanitized parameters only - never pass 'intent' or 'target_team'
+            continue_url = clean_params.get('continue', [None])[0]
             
-            saml_url = self._get_saml_redirect_url(team=team_name, continue_url=continue_url, intent=intent)
+            # CRITICAL: Never pass 'intent' parameter to prevent bypass
+            saml_url = self._get_saml_redirect_url(team=team_name, continue_url=continue_url)
         
         # Build absolute redirect URL
         redirect_url = f"https://{self.headers.get('Host', 'identity.getpostman.com')}{saml_url}"
@@ -624,17 +776,19 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
     
     def _get_saml_redirect_url(self, auth_challenge: str = None, team: str = None, 
-                              continue_url: str = None, intent: str = None) -> str:
+                              continue_url: str = None) -> str:
         """Generate SAML redirect URL based on IdP configuration.
         
         Unified method that handles both Desktop (with auth_challenge) and 
-        Browser (with continue/intent) authentication flows.
+        Browser (with continue URL) authentication flows.
+        
+        NOTE: The 'intent' parameter is explicitly NOT supported to prevent
+        bypass attempts via account switching.
         
         Args:
             auth_challenge: Desktop auth_challenge parameter (optional)
             team: Team name (defaults to config postman_team_name)
-            continue_url: Browser continue URL (optional)
-            intent: Browser intent parameter (optional)
+            continue_url: Browser continue URL (optional, must be validated)
             
         Returns:
             URL to redirect user to for SAML authentication
@@ -683,11 +837,12 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         if auth_challenge:
             query_params['auth_challenge'] = auth_challenge
         
-        # Add Browser-specific parameters  
+        # Add Browser-specific parameters (validated continue URL only)
         if continue_url:
             query_params['continue'] = continue_url
-        if intent:
-            query_params['intent'] = intent
+        
+        # CRITICAL: Never add 'intent' or 'target_team' parameters
+        # These can be used to bypass SAML enforcement
         
         return f"{base_url}?{urllib.parse.urlencode(query_params)}"
     
