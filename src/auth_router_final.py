@@ -558,19 +558,17 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             # Desktop flow with auth_challenge
             logger.info("Desktop flow detected - redirecting to SAML with auth_challenge")
             self.state_machine.session_data['auth_challenge'] = auth_challenge
-            saml_url = self._get_saml_redirect_url(auth_challenge)
+            saml_url = self._get_saml_redirect_url(auth_challenge=auth_challenge)
         else:
             # Browser flow without auth_challenge
             logger.info("Browser flow detected - redirecting to SAML with team")
             team_name = self.config.get('postman_team_name', 'postman')
             
-            # Build SAML parameters for browser flow
-            saml_params = {'team': team_name}
-            for param in ['continue', 'intent']:
-                if param in query_params and query_params[param]:
-                    saml_params[param] = query_params[param][0]
+            # Extract browser flow parameters
+            continue_url = query_params.get('continue', [None])[0]
+            intent = query_params.get('intent', [None])[0]
             
-            saml_url = self._get_saml_redirect_url_browser(saml_params)
+            saml_url = self._get_saml_redirect_url(team=team_name, continue_url=continue_url, intent=intent)
         
         # Build absolute redirect URL
         redirect_url = f"https://{self.headers.get('Host', 'identity.getpostman.com')}{saml_url}"
@@ -593,7 +591,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         """
         logger.warning(f"Forcing SAML redirect for bypass attempt on {self.path}")
         
-        saml_url = self._get_saml_redirect_url(auth_challenge)
+        saml_url = self._get_saml_redirect_url(auth_challenge=auth_challenge)
         redirect_url = f"https://{self.headers.get('Host', 'identity.getpostman.com')}{saml_url}"
         
         self.send_response(302)
@@ -601,71 +599,65 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('X-Enforcement', 'SAML-Required')
         self.end_headers()
     
-    def _get_saml_redirect_url(self, auth_challenge: str) -> str:
+    def _get_saml_redirect_url(self, auth_challenge: str = None, team: str = None, 
+                              continue_url: str = None, intent: str = None) -> str:
         """Generate SAML redirect URL based on IdP configuration.
         
+        Unified method that handles both Desktop (with auth_challenge) and 
+        Browser (with continue/intent) authentication flows.
+        
         Args:
-            auth_challenge: The auth_challenge parameter from Postman
+            auth_challenge: Desktop auth_challenge parameter (optional)
+            team: Team name (defaults to config postman_team_name)
+            continue_url: Browser continue URL (optional)
+            intent: Browser intent parameter (optional)
             
         Returns:
             URL to redirect user to for SAML authentication
         """
-        team = self.config['postman_team_name']
-        idp_type = self.config.get('idp_type', 'okta')
+        # Use configured team name if not provided
+        if team is None:
+            team = self.config['postman_team_name']
         
+        # Get IdP configuration - check both locations for compatibility
+        idp_type = (self.config.get('idp_config', {}).get('idp_type') or 
+                   self.config.get('idp_type', 'okta'))
+        
+        # Generate base URL based on IdP type
         if idp_type == 'okta':
             # Okta-specific SAML URL format
-            tenant_id = self.config.get('okta_tenant_id')
-            return f"/sso/okta/{tenant_id}/init?team={team}&auth_challenge={auth_challenge}"
-        
-        elif idp_type == 'azure':
-            # Azure AD SAML URL format
-            tenant_id = self.config.get('azure_tenant_id', '')
-            return f"/sso/azure/{tenant_id}/init?team={team}&auth_challenge={auth_challenge}"
-        
-        elif idp_type == 'ping':
-            # PingIdentity SAML URL format
-            connection_id = self.config.get('ping_connection_id', '')
-            return f"/sso/ping/{connection_id}/init?team={team}&auth_challenge={auth_challenge}"
-        
-        else:
-            # Generic SAML URL
-            return f"/sso/saml/init?team={team}&auth_challenge={auth_challenge}"
-    
-    def _get_saml_redirect_url_browser(self, saml_params: Dict) -> str:
-        """Generate SAML redirect URL for browser flows (no auth_challenge).
-        
-        Args:
-            saml_params: Parameters including team, continue, intent
-            
-        Returns:
-            URL to redirect browser to for SAML authentication
-        """
-        team = saml_params.get('team', 'postman')
-        idp_type = self.config.get('idp_type', 'okta')
-        
-        if idp_type == 'okta':
-            # Okta-specific SAML URL format
-            tenant_id = self.config.get('okta_tenant_id')
+            tenant_id = (self.config.get('idp_config', {}).get('okta_tenant_id') or
+                        self.config.get('okta_tenant_id'))
             base_url = f"/sso/okta/{tenant_id}/init"
+            
         elif idp_type == 'azure':
             # Azure AD SAML URL format
-            tenant_id = self.config.get('azure_tenant_id', '')
+            tenant_id = (self.config.get('idp_config', {}).get('tenant_id') or
+                        self.config.get('azure_tenant_id', ''))
             base_url = f"/sso/azure/{tenant_id}/init"
+            
         elif idp_type == 'ping':
             # PingIdentity SAML URL format
-            connection_id = self.config.get('ping_connection_id', '')
+            connection_id = (self.config.get('idp_config', {}).get('connection_id') or
+                           self.config.get('ping_connection_id', ''))
             base_url = f"/sso/ping/{connection_id}/init"
+            
         else:
             # Generic SAML URL
             base_url = "/sso/saml/init"
         
         # Build query parameters
         query_params = {'team': team}
-        if 'continue' in saml_params:
-            query_params['continue'] = saml_params['continue']
-        if 'intent' in saml_params:
-            query_params['intent'] = saml_params['intent']
+        
+        # Add Desktop-specific parameters
+        if auth_challenge:
+            query_params['auth_challenge'] = auth_challenge
+        
+        # Add Browser-specific parameters  
+        if continue_url:
+            query_params['continue'] = continue_url
+        if intent:
+            query_params['intent'] = intent
         
         return f"{base_url}?{urllib.parse.urlencode(query_params)}"
     
@@ -697,8 +689,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                 
                 # Wrap with SSL, setting SNI to the original hostname
                 context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                context.check_hostname = True
+                context.verify_mode = ssl.CERT_REQUIRED
                 
                 # This is the key: server_hostname sets SNI
                 ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
@@ -765,8 +757,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             else:
                 # Normal connection (no special handling needed)
                 context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                context.check_hostname = True
+                context.verify_mode = ssl.CERT_REQUIRED
                 
                 conn = HTTPSConnection(host, context=context)
                 
