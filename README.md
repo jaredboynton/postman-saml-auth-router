@@ -16,7 +16,7 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 │                                                     ↓                        │
 │                                                  Daemon evaluates:           │
 │                                                  • Bypass detection          │
-│                                                  • State machine: IDLE       │
+│                                                  • State: IDLE → AUTH_INIT    │
 │                                                  ↓                           │
 │                                                  ✓ INTERCEPT → SAML redirect │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -24,6 +24,7 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ STEP 2: SAML Authentication                                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
+│ Daemon state: AUTH_INIT → SAML_FLOW                                         │
 │ Redirected to IdP → User authenticates → SAML assertion generated           │
 │ (Okta/Azure/Ping)                        Returns to Postman with token      │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -34,7 +35,8 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 │ Return with SAML token → identity.postman.com → 127.0.0.1:443              │
 │                                                   ↓                          │
 │                                                Daemon evaluates:             │
-│                                                • State: OAUTH_CONTINUATION   │
+│                                                • State: SAML_FLOW →          │
+│                                                        OAUTH_CONTINUATION    │
 │                                                ↓                             │
 │                                                ✓ ALLOW → Proxy to real IP    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -42,7 +44,8 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ STEP 4: Session Established                                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ OAuth completes → Valid Postman session created → User authenticated        │
+│ OAuth completes → Valid Postman session → State: OAUTH_CONTINUATION → IDLE  │
+│ User authenticated (30s timeout returns to IDLE if no activity)             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
