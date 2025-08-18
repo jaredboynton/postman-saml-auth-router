@@ -13,62 +13,62 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 │ STEP 1: Initial Login Attempt                                             │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Entry Points:                                                             │
-│   • Desktop: /client/login?auth_challenge=xyz123...                      │
-│   • Browser: /login?continue=https://app.postman.com/...                 │
+│   • Desktop: /client/login?auth_challenge=xyz123...                       │
+│   • Browser: /login?continue=https://app.postman.com/...                  │
 │                                                                           │
-│ Request → identity.getpostman.com → 127.0.0.1:443 (via /etc/hosts)       │
+│ Request → identity.getpostman.com → 127.0.0.1:443 (via /etc/hosts)        │
 │                                                                           │
 │ Daemon Security Checks:                                                   │
 │   1. Bypass detection (intent=switch-account, fake auth_challenge)        │
 │   2. Desktop flow validation (auth_challenge requires /client/login)      │
-│   3. State machine: IDLE → AUTH_INIT                                     │
+│   3. State machine: IDLE → AUTH_INIT                                      │
 │                                                                           │
 │ Decision: ✓ INTERCEPT → SAML redirect                                     │
 └───────────────────────────────────────────────────────────────────────────┘
                                       ↓
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: SAML Redirection & Parameter Preservation                        │
+│ STEP 2: SAML Redirection & Parameter Preservation                         │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Daemon state: AUTH_INIT → SAML_FLOW                                       │
 │                                                                           │
-│ CRITICAL: Parameters are preserved through SAML flow:                    │
-│   • Desktop: auth_challenge passed to IdP → preserved in SAML            │
+│ CRITICAL: Parameters are preserved through SAML flow:                     │
+│   • Desktop: auth_challenge passed to IdP → preserved in SAML             │
 │   • Browser: continue URL validated & preserved                           │
 │                                                                           │
-│ Redirect to: /sso/{idp}/{tenant}/init?team={team}&{preserved_params}     │
+│ Redirect to: /sso/{idp}/{tenant}/init?team={team}&{preserved_params}      │
 │   → Your IdP (Okta/Azure/Ping)                                            │
 │   → User authenticates with corporate credentials                         │
 │   → SAML assertion generated with preserved context                       │
 └───────────────────────────────────────────────────────────────────────────┘
                                       ↓
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: OAuth Continuation (Protected from Interception)                 │
+│ STEP 3: OAuth Continuation (Protected from Interception)                  │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Return with SAML token + preserved params                                │
+│ Return with SAML token + preserved params                                 │
 │   → identity.postman.com/continue                                         │
-│   → 127.0.0.1:443 (daemon still sees traffic)                           │
+│   → 127.0.0.1:443 (daemon still sees traffic)                             │
 │                                                                           │
 │ Daemon behavior:                                                          │
 │   • Detects /continue path                                                │
 │   • State: SAML_FLOW → OAUTH_CONTINUATION                                 │
 │   • CRITICAL: Does NOT intercept (would break OAuth)                      │
-│   • Proxies to real Postman IP with SNI for Cloudflare                   │
+│   • Proxies to real Postman IP with SNI for Cloudflare                    │
 │                                                                           │
-│ OAuth validates SAML + exchanges for Postman session                     │
+│ OAuth validates SAML + exchanges for Postman session                      │
 └───────────────────────────────────────────────────────────────────────────┘
                                       ↓
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ STEP 4: Authenticated Session                                             │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Results:                                                                  │
-│   • Desktop: Returns to app with auth_challenge validated                │
-│   • Browser: Redirects to continue URL with session                      │
+│   • Desktop: Returns to app with auth_challenge validated                 │
+│   • Browser: Redirects to continue URL with session                       │
 │                                                                           │
 │ Daemon state: OAUTH_CONTINUATION → IDLE                                   │
-│   • 30-second timeout prevents stuck states                              │
-│   • Ready for next authentication request                                │
+│   • 30-second timeout prevents stuck states                               │
+│   • Ready for next authentication request                                 │
 │                                                                           │
-│ User has valid Postman session enforced via SAML                         │
+│ User has valid Postman session enforced via SAML                          │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
