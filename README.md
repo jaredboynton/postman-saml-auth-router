@@ -153,10 +153,10 @@ postman_redirect_daemon/
 │   ├── config.json.template        # Configuration template
 │   └── config.json                 # Your configuration (gitignored)
 │
-├── ssl/                            # SSL certificates
+├── ssl/                            # SSL certificates (local testing only)
 │   ├── cert.conf                   # Certificate configuration
-│   ├── cert.pem                    # SSL certificate (generated)
-│   └── key.pem                     # Private key (generated)
+│   ├── cert.pem                    # SSL certificate (generated for local testing)
+│   └── key.pem                     # Private key (generated for local testing)
 │
 ├── tools/                          # Utility scripts
 │   ├── clear_mac_sessions.sh       # macOS session clearing
@@ -179,6 +179,10 @@ postman_redirect_daemon/
 **Runtime Log Locations:**
 - macOS/Linux: `/var/log/postman-auth.log`
 - Windows: `C:\ProgramData\Postman\logs\postman-auth.log`
+
+**Enterprise Deployment Notes:**
+- SSL certificates: Enterprise deployments use certificates from your organization's CA, not the local ssl/ directory
+- Configuration: Production config deployed via MDM, not local config.json file
 ```
 
 ## Documentation
