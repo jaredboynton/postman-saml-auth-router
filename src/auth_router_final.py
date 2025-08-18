@@ -201,7 +201,7 @@ class AuthStateMachine:
        └───────────────────────────────────────┘
     
     Critical Rules:
-    - NEVER intercept during OAUTH_CONTINUATION state
+    - NEVER intercept during OAUTH_CONTINUATION state (breaks auth chain)
     - OAuth timeout (30s) prevents stuck sessions  
     - identity.postman.com hosts OAuth state validation
     - Breaking OAuth chain causes 401 authentication errors
@@ -263,7 +263,8 @@ class AuthStateMachine:
                     self.state_entered_at = datetime.now()
                     self.metrics['auth_attempts'] += 1
                     
-                    # Track if this is a legitimate Desktop flow starting with /client/login
+                    # IMPORTANT: Desktop flows MUST start with /client/login
+                    # This flag prevents auth_challenge replay attacks
                     if "/client" in path:
                         self.session_data['desktop_flow_initiated'] = True
                         logger.debug("Desktop flow initiated via /client/login")
@@ -357,7 +358,15 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         self._handle_request()
     
     def _handle_request(self):
-        """Main request handler for all HTTP methods."""
+        """Main request handler - entry point for all intercepted requests.
+        
+        Flow:
+        1. Health check bypass (/health endpoint)
+        2. Bypass detection (intent=switch-account, fake auth_challenge)
+        3. State machine check (should we intercept?)
+        4. SAML redirect if intercepting
+        5. Proxy to upstream if not intercepting
+        """
         host = self.headers.get('Host', '')
         path = self.path
         method = self.command
@@ -387,11 +396,15 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                     if self._is_safe_continue_url(continue_url):
                         clean_params['continue'] = [continue_url]
                 
+                # NEVER pass auth_challenge from a bypass attempt
                 self._handle_unified_saml_redirect(clean_params, None)
                 return
         
+        # Check if we should intercept based on state
         should_intercept = self.state_machine.should_intercept(host, path)
         
+        # CRITICAL SECURITY: Must intercept /login to prevent SAML bypass
+        # Direct SAML redirection avoids complex redirect chains that cause connection issues
         if should_intercept and parsed_url.path in ['/login', '/enterprise/login', '/enterprise/login/authchooser']:
             auth_challenge = query_params.get('auth_challenge', [''])[0]
             self._handle_unified_saml_redirect(query_params, auth_challenge)
@@ -582,7 +595,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         Unified method that handles both Desktop (with auth_challenge) and 
         Browser (with continue URL) authentication flows.
         
-        NOTE: The 'intent' parameter is explicitly NOT supported to prevent
+        SECURITY: The 'intent' parameter is explicitly NOT supported to prevent
         bypass attempts via account switching.
         
         Args:
@@ -677,7 +690,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         
         try:
             # For intercepted domains, use socket-level connection with SNI
-            if upstream_ip != host:  # We resolved to an IP
+            if upstream_ip != host:  # We resolved to an IP, need manual SNI handling
                 # Create raw socket to IP
                 import socket as sock
                 raw_socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
@@ -687,7 +700,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                 # Wrap with SSL, setting SNI to the original hostname
                 context = self._get_upstream_ssl_context()
                 
-                # This is the key: server_hostname sets SNI
+                # CRITICAL: server_hostname sets SNI for Cloudflare routing
+                # Without this, Cloudflare returns 525 SSL handshake failed
                 ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
                 
                 # Build HTTP request manually
