@@ -9,52 +9,63 @@ A local authentication proxy that forces all Postman sign-ins through your corpo
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: Initial Login Attempt                                                │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ User (Browser/Desktop) → identity.getpostman.com → 127.0.0.1:443            │
-│                                                     ↓                        │
-│                                                  Daemon evaluates:           │
-│                                                  • Bypass detection          │
-│                                                  • State: IDLE → AUTH_INIT    │
-│                                                  ↓                           │
-│                                                  ✓ INTERCEPT → SAML redirect │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                        ↓
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: SAML Authentication                                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ Daemon state: AUTH_INIT → SAML_FLOW                                         │
-│ Redirected to IdP → User authenticates → SAML assertion generated           │
-│ (Okta/Azure/Ping)                        Returns to Postman with token      │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                        ↓
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: OAuth Continuation                                                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ Return with SAML token → identity.postman.com → 127.0.0.1:443              │
-│                                                   ↓                          │
-│                                                Daemon evaluates:             │
-│                                                • State: SAML_FLOW →          │
-│                                                        OAUTH_CONTINUATION    │
-│                                                ↓                             │
-│                                                ✓ ALLOW → Proxy to real IP    │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                        ↓
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: Session Established                                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ OAuth completes → Valid Postman session → State: OAUTH_CONTINUATION → IDLE  │
-│ User authenticated (30s timeout returns to IDLE if no activity)             │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ STEP 1: Initial Login Attempt                                             │
+├───────────────────────────────────────────────────────────────────────────┤
+│ User (Browser/Desktop)                                                    │
+│        → identity.getpostman.com                                          │
+│        → 127.0.0.1:443                                                    │
+│                                                                           │
+│ Daemon evaluates:                                                         │
+│   • Bypass detection                                                      │
+│   • State: IDLE → AUTH_INIT                                               │
+│        ↓                                                                  │
+│   ✓ INTERCEPT → SAML redirect                                             │
+└───────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌───────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: SAML Authentication                                               │
+├───────────────────────────────────────────────────────────────────────────┤
+│ Daemon state: AUTH_INIT → SAML_FLOW                                       │
+│                                                                           │
+│ Redirected to IdP (Okta / Azure / Ping)                                   │
+│        → User authenticates                                               │
+│        → SAML assertion generated                                         │
+│                                                                           │
+│ Returns to Postman with token                                             │
+└───────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌───────────────────────────────────────────────────────────────────────────┐
+│ STEP 3: OAuth Continuation                                                │
+├───────────────────────────────────────────────────────────────────────────┤
+│ SAML token returned                                                       │
+│        → identity.postman.com                                             │
+│        → 127.0.0.1:443                                                    │
+│                                                                           │
+│ Daemon evaluates:                                                         │
+│   • State: SAML_FLOW → OAUTH_CONTINUATION                                 │
+│        ↓                                                                  │
+│   ✓ ALLOW → Proxy to real IP                                              │
+└───────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌───────────────────────────────────────────────────────────────────────────┐
+│ STEP 4: Session Established                                               │
+├───────────────────────────────────────────────────────────────────────────┤
+│ OAuth completes → Valid Postman session                                   │
+│                                                                           │
+│ State: OAUTH_CONTINUATION → IDLE                                          │
+│                                                                           │
+│ User authenticated                                                        │
+│ (30s timeout returns to IDLE if no activity)                              │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
 
 **Key Benefits:**
-- **100% SAML enforcement** - No bypass possible
-- **Works everywhere** - Office, home, VPN, coffee shop
-- **Quick deployment** - Via MDM, no network changes
+- **100% SAML enforcement** for all Postman authentication flows
+- **Works everywhere:** Office, home, VPN, coffee shop
+- **Quick deployment** to devices via MDM, no network changes
 - **No dependencies** - Pure Python standard library
 - **99% data exfiltration prevention** when combined with Domain Capture and Device Trust. While this won't stop a copy-paster or an intentionally malicious actor, this should stop everything else.
 
@@ -82,11 +93,11 @@ Organizations often ask: "Can we implement this with our existing security tools
 - **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
 
 **What Alternatives Can Do**:
-- ✅ **Detection & Alerting**: Monitor Postman usage
-- ✅ **Complete Blocking**: Prevent all Postman access 
-- ❌ **SAML Enforcement**: Cannot redirect while preserving OAuth
+- **Detection & Alerting**: Monitor Postman usage
+- **Complete Blocking**: Prevent all Postman access 
+- ❌ **HOWEVER --** they cannot redirect while preserving OAuth
 
-**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
+**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer, and even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
 
 **Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
 
