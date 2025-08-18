@@ -173,8 +173,10 @@ certutil -addstore -f "Root" cert.pem
 ```json
 {
     "postman_team_name": "your-company-name",
-    "idp_type": "okta",
-    "okta_tenant_id": "your-okta-tenant-id"
+    "idp_config": {
+        "idp_type": "okta",
+        "okta_tenant_id": "your-okta-tenant-id"
+    }
 }
 ```
 
@@ -182,8 +184,10 @@ certutil -addstore -f "Root" cert.pem
 ```json
 {
     "postman_team_name": "your-company-name",
-    "idp_type": "okta",
-    "okta_tenant_id": "your-okta-tenant-id",
+    "idp_config": {
+        "idp_type": "okta",
+        "okta_tenant_id": "your-okta-tenant-id"
+    },
     "advanced": {
         "timeout_seconds": 30,
         "oauth_timeout_seconds": 30,

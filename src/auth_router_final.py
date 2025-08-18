@@ -619,27 +619,33 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         if team is None:
             team = self.config['postman_team_name']
         
-        # Get IdP configuration - check both locations for compatibility
-        idp_type = (self.config.get('idp_config', {}).get('idp_type') or 
-                   self.config.get('idp_type', 'okta'))
+        # Get IdP configuration from standardized location
+        idp_config = self.config.get('idp_config', {})
+        idp_type = idp_config.get('idp_type', 'generic')  # Use generic as safe fallback for handler
         
         # Generate base URL based on IdP type
         if idp_type == 'okta':
             # Okta-specific SAML URL format
-            tenant_id = (self.config.get('idp_config', {}).get('okta_tenant_id') or
-                        self.config.get('okta_tenant_id'))
+            tenant_id = idp_config.get('okta_tenant_id', '')
+            if not tenant_id:
+                logger.error("Missing okta_tenant_id in IdP configuration")
+                tenant_id = 'missing-tenant-id'
             base_url = f"/sso/okta/{tenant_id}/init"
             
         elif idp_type == 'azure':
             # Azure AD SAML URL format
-            tenant_id = (self.config.get('idp_config', {}).get('tenant_id') or
-                        self.config.get('azure_tenant_id', ''))
+            tenant_id = idp_config.get('tenant_id', '')
+            if not tenant_id:
+                logger.error("Missing tenant_id in Azure IdP configuration")
+                tenant_id = 'missing-tenant-id'
             base_url = f"/sso/azure/{tenant_id}/init"
             
         elif idp_type == 'ping':
             # PingIdentity SAML URL format
-            connection_id = (self.config.get('idp_config', {}).get('connection_id') or
-                           self.config.get('ping_connection_id', ''))
+            connection_id = idp_config.get('connection_id', '')
+            if not connection_id:
+                logger.error("Missing connection_id in Ping IdP configuration")
+                connection_id = 'missing-connection-id'
             base_url = f"/sso/ping/{connection_id}/init"
             
         else:
@@ -816,6 +822,9 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         """Handle health check endpoint for monitoring."""
         uptime = time.time()  # Simplified for standard library
         
+        # Get IdP config from standardized location
+        idp_config = self.config.get('idp_config', {})
+        
         status = {
             'status': 'healthy',
             'mode': self.mode.value,
@@ -824,7 +833,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             'metrics': self.state_machine.metrics,
             'config': {
                 'team': self.config.get('postman_team_name'),
-                'idp_type': self.config.get('idp_type')
+                'idp_type': idp_config.get('idp_type')
             }
         }
         
@@ -933,20 +942,36 @@ class PostmanAuthDaemon:
     
     def _validate_config(self) -> None:
         """Validate configuration has required fields."""
-        required_fields = ['postman_team_name']
+        required_fields = ['postman_team_name', 'idp_config']
         for field in required_fields:
             if field not in self.config:
                 raise ValueError(f"Missing required config field: {field}")
         
-        # Validate okta-specific fields if using okta
-        idp_config = self.config.get('idp_config', {})
-        if idp_config.get('idp_type') == 'okta' or self.config.get('idp_type') == 'okta':
-            if not self.config.get('okta_tenant_id'):
-                logger.warning("okta_tenant_id not configured - SAML redirect may fail")
+        # Validate IdP configuration structure
+        idp_config = self.config['idp_config']
+        if not isinstance(idp_config, dict):
+            raise ValueError("idp_config must be a dictionary")
         
-        # Set defaults
+        if 'idp_type' not in idp_config:
+            raise ValueError("Missing required field: idp_config.idp_type")
+        
+        idp_type = idp_config['idp_type']
+        
+        # Validate IdP-specific required fields
+        if idp_type == 'okta':
+            if not idp_config.get('okta_tenant_id'):
+                raise ValueError("Missing required field for Okta: idp_config.okta_tenant_id")
+        elif idp_type == 'azure':
+            if not idp_config.get('tenant_id'):
+                raise ValueError("Missing required field for Azure: idp_config.tenant_id")
+        elif idp_type == 'ping':
+            if not idp_config.get('connection_id'):
+                raise ValueError("Missing required field for Ping: idp_config.connection_id")
+        elif idp_type != 'generic':
+            logger.warning(f"Unknown IdP type: {idp_type}. Using generic SAML handling.")
+        
+        # Set defaults for optional fields only
         self.config.setdefault('postman_hostname', 'identity.getpostman.com')
-        self.config.setdefault('idp_type', 'okta')
         self.config.setdefault('ssl_cert', 'ssl/cert.pem')
         self.config.setdefault('ssl_key', 'ssl/key.pem')
         self.config.setdefault('listen_port', 443)

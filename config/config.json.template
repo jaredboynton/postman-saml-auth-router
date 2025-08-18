@@ -7,19 +7,19 @@
   "postman_team_name": "YOUR_TEAM_NAME",
   "_postman_team_name_help": "Your Postman team name (e.g., 'acme-corp'). This is used to auto-populate team selection during SAML redirect. Find this in your Postman team URL: https://app.postman.com/team/YOUR_TEAM_NAME",
   
-  "okta_tenant_id": "YOUR_OKTA_TENANT_ID", 
-  "_okta_tenant_id_help": "Okta tenant ID for SAML integration. Extract from your Postman SAML configuration in Okta (usually a long alphanumeric string like 'db1b1a3764f24213906d682e26fd366f')",
-  
-  "_optional_idp_config": "Identity Provider Configuration - customize for your IdP type:",
+  "_idp_configuration": "Identity Provider Configuration - ALL IdP settings must be in the idp_config block:",
   "idp_config": {
     "idp_type": "okta",
     "_idp_type_help": "Supported types: 'okta', 'azure', 'ping', 'generic'. Determines SAML URL format and parameter handling",
     
+    "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
+    "_okta_tenant_id_help": "[REQUIRED for Okta] Okta tenant ID for SAML integration. Extract from your Postman SAML configuration in Okta (usually a long alphanumeric string like 'db1b1a3764f24213906d682e26fd366f')",
+    
     "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/YOUR_INTEGRATION_ID/sso/saml",
-    "_idp_url_help": "Full SAML SSO URL from your IdP. For Okta: found in Applications > YOUR_APP > General > App Embed Link. For Azure: found in Enterprise Applications > YOUR_APP > Single sign-on",
+    "_idp_url_help": "[OPTIONAL] Full SAML SSO URL from your IdP. For Okta: found in Applications > YOUR_APP > General > App Embed Link. For Azure: found in Enterprise Applications > YOUR_APP > Single sign-on",
     
     "okta_app_id": "YOUR_OKTA_APP_ID",
-    "_okta_app_id_help": "Okta Application ID (optional, used for advanced Okta integrations). Find in Okta Admin > Applications > YOUR_APP > General tab"
+    "_okta_app_id_help": "[OPTIONAL] Okta Application ID (used for advanced Okta integrations). Find in Okta Admin > Applications > YOUR_APP > General tab"
   },
   
   "_ssl_configuration": "SSL Certificate Configuration - daemon requires valid certificates:",
@@ -75,9 +75,9 @@
     "_okta_example": "Complete Okta configuration example:",
     "okta": {
       "postman_team_name": "acme-corp",
-      "okta_tenant_id": "db1b1a3764f24213906d682e26fd366f",
       "idp_config": {
         "idp_type": "okta",
+        "okta_tenant_id": "db1b1a3764f24213906d682e26fd366f",
         "idp_url": "https://acme.okta.com/app/postman/exk2e5ac26g30Z4QB5d7/sso/saml",
         "okta_app_id": "0oa2e5ac26g30Z4QB5d7"
       }

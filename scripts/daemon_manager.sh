@@ -41,9 +41,9 @@ check_dependencies() {
         echo -e "${GREEN}✓ OpenSSL found${NC}"
     fi
     
-    # Check dig (for DNS checks)
-    if ! command -v dig &> /dev/null; then
-        echo -e "${YELLOW}⚠ dig not found (optional, for DNS verification)${NC}"
+    # Check nslookup (for DNS checks)
+    if ! command -v nslookup &> /dev/null; then
+        echo -e "${YELLOW}⚠ nslookup not found (optional, for DNS verification)${NC}"
     fi
     
     return $missing
@@ -385,11 +385,16 @@ EOF
         # 5. Check DNS resolution
         echo ""
         echo "Checking DNS configuration..."
-        REAL_IP=$(dig +short identity.getpostman.com @8.8.8.8 | tail -n1)
-        if [ -n "$REAL_IP" ]; then
-            echo -e "  ${GREEN}✓${NC} External DNS resolution working"
+        if command -v nslookup &> /dev/null; then
+            REAL_IP=$(nslookup identity.getpostman.com 8.8.8.8 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -n1)
+            if [ -n "$REAL_IP" ]; then
+                echo -e "  ${GREEN}✓${NC} External DNS resolution working (nslookup)"
+            else
+                echo -e "  ${YELLOW}⚠${NC} Could not verify external DNS with nslookup"
+                WARNINGS=$((WARNINGS + 1))
+            fi
         else
-            echo -e "  ${YELLOW}⚠${NC} Could not verify external DNS"
+            echo -e "  ${YELLOW}⚠${NC} nslookup not available for DNS verification"
             WARNINGS=$((WARNINGS + 1))
         fi
         

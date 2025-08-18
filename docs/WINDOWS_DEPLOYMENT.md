@@ -40,7 +40,7 @@ This guide provides comprehensive instructions for deploying the Postman SAML Au
    notepad config\config.json
    
    # Run setup
-   .\daemon_manager.ps1 setup
+   .\scripts\daemon_manager.ps1 setup
    ```
 
 ### Testing the Deployment
@@ -49,7 +49,7 @@ After setup completes:
 
 1. **Run Preflight Checks**
    ```powershell
-   .\daemon_manager.ps1 preflight
+   .\scripts\daemon_manager.ps1 preflight
    ```
 
 2. **Test Authentication**
@@ -59,7 +59,7 @@ After setup completes:
 
 3. **Monitor Logs**
    ```powershell
-   .\daemon_manager.ps1 logs
+   .\scripts\daemon_manager.ps1 logs
    ```
 
 ## Enterprise Deployment
@@ -71,7 +71,7 @@ After setup completes:
 1. **Create deployment package** with the following structure:
    ```
    PostmanAuthRouter.zip
-   ├── daemon_manager.ps1
+   ├── scripts/daemon_manager.ps1
    ├── tools/
    │   └── deploy_intune.ps1
    ├── src/
@@ -323,7 +323,7 @@ Get-EventLog -LogName Application -Source "PostmanAuthRouter" -Newest 10
 
 ```powershell
 # Full system check
-.\daemon_manager.ps1 preflight
+.\scripts\daemon_manager.ps1 preflight
 
 # Manual health check
 Invoke-WebRequest -Uri "https://identity.getpostman.com/health" -UseBasicParsing
@@ -340,7 +340,7 @@ If deployment needs to be reversed:
 
 ```powershell
 # Run cleanup
-.\daemon_manager.ps1 cleanup
+.\scripts\daemon_manager.ps1 cleanup
 
 # Or via SCCM
 .\deploy_sccm.ps1 -Mode Uninstall
@@ -376,7 +376,7 @@ For issues specific to Windows deployment:
 1. Check this guide's troubleshooting section
 2. Review logs in `C:\ProgramData\Postman\logs\`
 3. Verify all prerequisites are met
-4. Test with `.\daemon_manager.ps1 preflight`
+4. Test with `.\scripts\daemon_manager.ps1 preflight`
 
 ---
 

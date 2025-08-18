@@ -216,10 +216,10 @@ Edit `config/config.json` (copy from `config/config.json.template`):
 ```json
 {
   "postman_team_name": "YOUR_TEAM_NAME",
-  "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
   
   "idp_config": {
     "idp_type": "okta",
+    "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
     "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/sso/saml",
     "okta_app_id": "YOUR_OKTA_APP_ID"
   },

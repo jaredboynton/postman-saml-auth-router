@@ -620,16 +620,16 @@ function Start-Preflight {
         $errors++
     }
     
-    # 5. Check DNS resolution
+    # 5. Check DNS resolution (using Windows-native Resolve-DnsName)
     Write-ColorOutput ""
     Write-ColorOutput "Checking DNS configuration..." -Color Default
     try {
         $result = Resolve-DnsName -Name "identity.getpostman.com" -Server "8.8.8.8" -ErrorAction Stop
         if ($result) {
-            Write-ColorOutput "  ✓ External DNS resolution working" -Color Green
+            Write-ColorOutput "  ✓ External DNS resolution working (Resolve-DnsName)" -Color Green
         }
     } catch {
-        Write-ColorOutput "  ⚠ Could not verify external DNS" -Color Yellow
+        Write-ColorOutput "  ⚠ Could not verify external DNS with Resolve-DnsName" -Color Yellow
         $warnings++
     }
     

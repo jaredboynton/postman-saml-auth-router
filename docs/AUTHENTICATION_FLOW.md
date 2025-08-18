@@ -39,15 +39,56 @@ identity.postman.co/continue?state=AAA...
 
 Each domain validates and generates a new state. Breaking this chain causes 401 errors.
 
+## State Machine Flow
+
+The daemon tracks authentication using a 6-state machine:
+
+```
+IDLE → AUTH_INIT → LOGIN_REDIRECT → SAML_FLOW → OAUTH_CONTINUATION → COMPLETE
+```
+
+**State Transitions:**
+1. **IDLE**: No authentication in progress
+2. **AUTH_INIT**: User starts authentication (Desktop or Browser)
+3. **LOGIN_REDIRECT**: Daemon intercepts login page, redirects to SAML
+4. **SAML_FLOW**: SAML authentication in progress with IdP
+5. **OAUTH_CONTINUATION**: OAuth state machine (NEVER intercept)
+6. **COMPLETE**: Authentication successful, reset to IDLE after 5 seconds
+
+**Critical Rule:** Once in OAUTH_CONTINUATION state, the daemon never intercepts any requests. This ensures the OAuth state machine completes successfully across all Postman domains.
+
 ## Minimal Interception Strategy
 
 ### MUST Pass Through (Never Intercept)
 1. `/client/login` - Generates auth_challenge
 2. `/client-auth/*` - Auth challenge generation
 3. `/client/browser-auth/*` - Browser auth init
-4. `/continue?state=...` - OAuth state machine
+4. `/continue?state=...` - OAuth state machine (CRITICAL)
 5. `/sso/okta/*/callback` - SAML responses
 6. Any request with Okta/SAML referrer (prevent loops)
+
+### OAuth Continuation Timeout Protection
+
+The daemon implements a **30-second timeout** for OAuth continuation states:
+
+```python
+if self.current_state == AuthState.OAUTH_CONTINUATION:
+    if (datetime.now() - self.state_entered_at).seconds > 30:
+        # Reset to IDLE to prevent stuck sessions
+        self.current_state = AuthState.IDLE
+    return False  # NEVER intercept during OAuth flow
+```
+
+**Why 30 seconds:**
+- Typical OAuth flows complete in 5-10 seconds
+- Allows for slow networks and processing delays
+- Prevents sessions stuck indefinitely in OAuth state
+- Automatic recovery from network interruptions
+
+**What happens during timeout:**
+- State machine resets to IDLE
+- Next authentication attempt starts fresh
+- No impact on user experience (transparent recovery)
 
 ### SHOULD Intercept (Force SAML)
 1. `/login?auth_challenge=...` (Desktop flow)
