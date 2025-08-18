@@ -165,7 +165,6 @@ Organizations often ask: "Can we implement this with our existing security tools
 ```
 postman_redirect_daemon/
 ├── README.md                       # This file
-├── PROGRESS.md                     # Development progress tracker
 │
 ├── scripts/                        # Management scripts
 │   ├── daemon_manager.sh           # macOS/Linux management
