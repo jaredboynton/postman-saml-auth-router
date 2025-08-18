@@ -80,9 +80,9 @@ Browser/Desktop App → identity.getpostman.com
 Local Authentication Daemon (port 443)
          ↓
 State Machine Tracks Authentication Flow
-   ├─ IDLE → AUTH_INIT → LOGIN_REDIRECT → SAML_FLOW
+   ├─ IDLE → AUTH_INIT → SAML_FLOW
    ├─ OAUTH_CONTINUATION (30s timeout, never intercept)
-   └─ COMPLETE → Reset to IDLE
+   └─ Reset to IDLE after timeout or completion
          ↓
 Intercept at specific points only:
    ├─ /login (Web + Desktop) → Redirect to Corporate IDP (SAML)
@@ -93,15 +93,13 @@ Intercept at specific points only:
 
 ### State Machine for Authentication Flow Control
 
-The daemon includes a sophisticated 6-state machine that handles both Web and Desktop authentication flows:
+The daemon includes a 4-state machine that handles both Web and Desktop authentication flows:
 
 **Authentication States:**
 - `IDLE` - No authentication in progress  
 - `AUTH_INIT` - Initial auth request received (Desktop `/client/login` or Web `/login`)
-- `LOGIN_REDIRECT` - Intercepting login page, redirecting to SAML
 - `SAML_FLOW` - User in SAML authentication with IdP
-- `OAUTH_CONTINUATION` - OAuth token exchange (No intercept, 30s timeout)
-- `COMPLETE` - Authentication completed successfully
+- `OAUTH_CONTINUATION` - OAuth token exchange (Never intercept, 30s timeout)
 
 **Critical OAuth Protection:**
 - **Never intercepts** `/continue` paths during OAuth state validation
@@ -144,6 +142,7 @@ The daemon includes a sophisticated 6-state machine that handles both Web and De
 - **Device-Level Enforcement** - No network infrastructure changes required
 - **Compliance Ready** - Full audit logging and session control
 - **Zero External Dependencies** - Uses only Python standard library
+- **Enforce Mode Only** - Daemon always enforces SAML (no monitor/test modes)
 
 ### Security & Monitoring Features
 
@@ -164,7 +163,7 @@ The daemon includes a sophisticated 6-state machine that handles both Web and De
 - Health endpoint with real-time metrics and uptime tracking
 
 **Monitoring Capabilities:**
-- `/health` endpoint on port 8443 for external monitoring systems
+- `/health` endpoint on the main HTTPS port (443)
 - Real-time metrics including:
   - Total authentication attempts
   - SAML redirects performed
@@ -172,6 +171,23 @@ The daemon includes a sophisticated 6-state machine that handles both Web and De
   - Successful/failed authentications
   - Current daemon state and uptime
 - Integration-ready JSON responses for SIEM systems
+
+## Optional: Dynamic Hosts Management
+
+For environments where static hosts entries aren't viable, the daemon supports runtime modification of /etc/hosts:
+
+```bash
+# Enable dynamic hosts management
+sudo python3 src/auth_router_final.py --config config/config.json --dynamic-hosts
+```
+
+This feature:
+- Adds hosts entries when authentication starts
+- Removes entries during OAuth continuation
+- Restores entries after completion
+- Automatically cleans up on shutdown
+
+**Note**: Static hosts entries (default) are recommended for production deployments.
 
 ## Getting Started
 
@@ -254,11 +270,9 @@ Edit `config/config.json` (copy from `config/config.json.template`):
   
   "advanced": {
     "dns_server": "8.8.8.8",
-    "dns_resolution_method": "auto",
     "timeout_seconds": 30,
     "oauth_timeout_seconds": 30,
-    "listen_port": 443,
-    "health_check_port": 8443
+    "listen_port": 443
   }
 }
 ```
@@ -422,31 +436,50 @@ This capability ensures that within minutes, all users must re-authenticate thro
 
 **Key Files:**
 - `src/auth_router_final.py` - The daemon with state machine for Web+Desktop
+- `src/dynamic_hosts/hosts_manager.py` - Optional dynamic hosts management module
 - `config/config.json` - Your IDP configuration (all values externalized)
 - `config/config.json.template` - Template with all configurable options
 - `ssl/cert.pem & key.pem` - SSL certificates
 - `scripts/daemon_manager.sh and scripts/daemon_manager.ps1` - Management scripts for setup and control
 
+**Important Constants:**
+```python
+BUFFER_SIZE = 4096          # Network buffer size for proxying
+DEFAULT_TIMEOUT = 30        # General session timeout (seconds)
+OAUTH_TIMEOUT = 30          # OAuth continuation timeout (seconds)
+HTTPS_PORT = 443            # Main daemon listening port
+HEALTH_PORT = 8443          # Health endpoint port (unused in current version)
+DEFAULT_DNS_SERVER = '8.8.8.8'  # External DNS for IP resolution
+```
+
 **Core Logic with State Machine:**
 ```python
-def route_request():
-    # Track authentication state
-    if state_machine.should_intercept(host, path, params):
-        if is_desktop_flow(params):
-            # Desktop: Redirect with auth_challenge
-            redirect_to_saml_with_challenge(params['auth_challenge'])
-        else:
-            # Web: Standard SAML redirect
-            redirect_to_saml()
+def _handle_request(self):
+    # Check for bypass attempts
+    if self._is_bypass_attempt(query_params):
+        self._handle_unified_saml_redirect(clean_params, None)
+        return
+    
+    # Check if we should intercept based on state
+    if state_machine.should_intercept(host, path):
+        # Desktop flow has auth_challenge, Web flow doesn't
+        auth_challenge = query_params.get('auth_challenge', [''])[0]
+        self._handle_unified_saml_redirect(query_params, auth_challenge)
     else:
         # Pass through (valid session or OAuth continuation)
-        proxy_to_real_postman()
+        self._proxy_to_upstream(host, path, method)
 ```
 
 **Desktop vs Web Flow Detection:**
 - **Desktop**: Includes `auth_challenge` parameter in login request
 - **Web**: Standard `/login` without auth_challenge
 - **Both**: Redirect to same SAML endpoint, tracked by state machine
+
+**Refactored Architecture (v2.1):**
+- Decomposed proxy methods: `_proxy_with_sni()`, `_proxy_direct()`, `_build_request()`, `_send_parsed_response()`
+- Simplified `should_intercept()` with helper methods: `_handle_idle_state()`, `_handle_oauth_state()`
+- Better error handling with specific exception types (ConnectionError, TimeoutError, ssl.SSLError)
+- Class attributes instead of global variables for signal handling
 
 ### Testing & Validation
 
@@ -474,6 +507,10 @@ def route_request():
 **Certificate Issues**
 ```bash
 sudo ./scripts/daemon_manager.sh cert    # Regenerate/trust certificates
+
+# macOS: MUST use -r trustRoot flag for SSL trust
+sudo security add-trusted-cert -d -r trustRoot \
+    -k /Library/Keychains/System.keychain ssl/cert.pem
 ```
 
 **Connection Refused**
@@ -527,9 +564,13 @@ postman_redirect_daemon/
 │   ├── config.json.template      # Configuration template
 │   └── config.json               # Your configuration (do not commit)
 ├── src/
-│   └── auth_router_final.py      # Daemon with state machine
+│   ├── auth_router_final.py      # Main daemon with state machine
+│   └── dynamic_hosts/
+│       └── hosts_manager.py      # Optional dynamic hosts management
 ├── ssl/
 │   ├── cert.conf                 # Certificate configuration
+│   ├── cert.pem                   # SSL certificate (generated)
+│   └── key.pem                    # SSL private key (generated)
 ├── tools/
 │   ├── clear_mac_sessions.sh     # macOS session clearing
 │   ├── clear_win_sessions.ps1    # Windows session clearing
@@ -540,7 +581,7 @@ postman_redirect_daemon/
 │   ├── TECHNICAL.md              # Technical implementation details
 │   ├── WINDOWS_DEPLOYMENT.md     # Windows-specific deployment guide
 │   ├── MACOS_DEPLOYMENT.md       # macOS-specific deployment guide
-│   ├── AUTHENTICATION_FLOW.md    # Authentication flow analysis
+│   └── AUTHENTICATION_FLOW.md    # Authentication flow analysis
 └── PROGRESS.md                   # Project progress tracker
 ```
 
