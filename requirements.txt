@@ -1,3 +1,0 @@
-# Postman Authentication Router - Python Dependencies
-# Production MDM deployment uses ZERO external dependencies
-# Everything is implemented using Python standard library only
