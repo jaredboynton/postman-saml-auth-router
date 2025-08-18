@@ -713,12 +713,12 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             base_url = f"/sso/okta/{tenant_id}/init"
             
         elif idp_type == 'azure':
-            # Azure AD SAML URL format
-            tenant_id = idp_config.get('tenant_id', '')
-            if not tenant_id:
-                logger.error("Missing tenant_id in Azure IdP configuration")
-                tenant_id = 'missing-tenant-id'
-            base_url = f"/sso/azure/{tenant_id}/init"
+            # Azure AD SAML URL format - uses /sso/adfs/{integration_id}/init
+            integration_id = idp_config.get('postman_integration_id', '')
+            if not integration_id:
+                logger.error("Missing postman_integration_id in Azure IdP configuration")
+                integration_id = 'missing-integration-id'
+            base_url = f"/sso/adfs/{integration_id}/init"
             
         elif idp_type == 'ping':
             # PingIdentity SAML URL format
@@ -1116,6 +1116,8 @@ class PostmanAuthDaemon:
             if not idp_config.get('okta_tenant_id'):
                 raise ValueError("Missing required field for Okta: idp_config.okta_tenant_id")
         elif idp_type == 'azure':
+            if not idp_config.get('postman_integration_id'):
+                raise ValueError("Missing required field for Azure: idp_config.postman_integration_id")
             if not idp_config.get('tenant_id'):
                 raise ValueError("Missing required field for Azure: idp_config.tenant_id")
         elif idp_type == 'ping':
