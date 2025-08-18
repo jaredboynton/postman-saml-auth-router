@@ -145,6 +145,34 @@ The daemon includes a sophisticated 6-state machine that handles both Web and De
 - **Compliance Ready** - Full audit logging and session control
 - **Zero External Dependencies** - Uses only Python standard library
 
+### Security & Monitoring Features
+
+**Bypass Detection & Prevention:**
+- Real-time detection and blocking of authentication bypass attempts
+- Automatic detection of suspicious query parameters (intent=switch-account, target_team, etc.)
+- Auth challenge validation to prevent replay attacks with expired tokens
+- Desktop flow tracking to ensure legitimate authentication sequences
+- Parameter sanitization to remove dangerous bypass vectors
+- Comprehensive logging of all blocked bypass attempts for security auditing
+
+**Enterprise Logging:**
+- Rotating log files with configurable size limits (default: 10MB with 5 backups)
+- Automatic log rotation to prevent disk space exhaustion
+- Structured logging with severity levels (INFO, WARNING, ERROR)
+- Security event tracking with bypass attempt metrics
+- Session state transitions logged for debugging
+- Health endpoint with real-time metrics and uptime tracking
+
+**Monitoring Capabilities:**
+- `/health` endpoint on port 8443 for external monitoring systems
+- Real-time metrics including:
+  - Total authentication attempts
+  - SAML redirects performed
+  - Bypass attempts blocked
+  - Successful/failed authentications
+  - Current daemon state and uptime
+- Integration-ready JSON responses for SIEM systems
+
 ## Getting Started
 
 ### Prerequisites

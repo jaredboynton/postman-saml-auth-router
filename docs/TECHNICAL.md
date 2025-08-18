@@ -222,6 +222,44 @@ sudo python3 auth_router_final.py --mode test
 ```
 Verbose logging for troubleshooting authentication issues.
 
+## Logging Configuration
+
+### Automatic Log Rotation
+
+The daemon implements automatic log rotation to prevent disk space exhaustion:
+
+```json
+{
+    "advanced": {
+        "log_file": "/var/log/postman-auth.log",
+        "log_max_size_mb": 10,      // Rotate at 10MB
+        "log_backup_count": 5        // Keep 5 backup files
+    }
+}
+```
+
+**Features:**
+- RotatingFileHandler with configurable size limits
+- Automatic creation of backup files (postman-auth.log.1, .2, etc.)
+- Graceful fallback to console logging if file permissions denied
+- Structured logging format with timestamps and severity levels
+
+**Log Levels:**
+- **INFO**: Normal operations, state transitions, successful authentications
+- **WARNING**: Bypass attempts, timeouts, suspicious activity
+- **ERROR**: Connection failures, configuration issues, SSL errors
+- **DEBUG**: Detailed request/response data (verbose mode only)
+
+### Security Event Logging
+
+All security-relevant events are logged with appropriate severity:
+
+```log
+2025-08-18 10:23:45 - postman-auth - WARNING - BYPASS ATTEMPT DETECTED: intent=switch-account
+2025-08-18 10:23:45 - postman-auth - WARNING - Bypass attempt detected: auth_challenge without prior /client/login
+2025-08-18 10:23:45 - postman-auth - INFO - Stripped potentially dangerous parameters: {'intent', 'target_team'}
+```
+
 ## Health Monitoring
 
 ### Health Check Endpoint
@@ -235,21 +273,56 @@ Returns:
     "status": "healthy",
     "mode": "enforce",
     "current_state": "idle",
+    "uptime_seconds": 3600,
     "metrics": {
         "auth_attempts": 145,
         "saml_redirects": 145,
-        "bypass_attempts": 0,
-        "successful_auths": 143
+        "bypass_attempts": 3,
+        "successful_auths": 143,
+        "failed_auths": 2
+    },
+    "config": {
+        "team": "postman",
+        "idp_type": "okta"
     }
 }
 ```
 
+**Monitoring Integration:**
+- JSON format for easy SIEM/monitoring tool integration
+- Real-time metrics without requiring log parsing
+- Uptime tracking for availability monitoring
+- Configuration visibility for audit compliance
+
 ## Security Considerations
 
-### Bypass Prevention
-- Daemon detects and logs bypass attempts
-- Forces SAML even when users try direct login
-- Metrics track bypass attempts for security monitoring
+### Bypass Prevention & Detection
+
+The daemon implements multi-layered security to prevent authentication bypass:
+
+**Query Parameter Analysis:**
+- Detects and blocks `intent=switch-account` attempts
+- Removes `target_team` parameters that could bypass team selection
+- Strips dangerous parameters like `force_auth` and `skip_saml`
+- Sanitizes all login requests to preserve only safe parameters
+
+**Auth Challenge Validation:**
+```python
+# Desktop flows MUST start with /client/login
+if 'auth_challenge' in query_params:
+    desktop_flow_initiated = session_data.get('desktop_flow_initiated', False)
+    if not desktop_flow_initiated:
+        # This is a bypass attempt with fake/expired auth_challenge
+        return True  # Block the request
+```
+
+**Continue URL Validation:**
+- Only allows HTTPS URLs
+- Restricts to Postman-owned domains
+- Blocks external redirects that could leak credentials
+
+**Security Metrics:**
+All bypass attempts are logged and tracked in real-time metrics accessible via the health endpoint for SIEM integration.
 
 ### Certificate Pinning Risk
 - Future Postman versions may implement certificate pinning
