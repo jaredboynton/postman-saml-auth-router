@@ -193,7 +193,7 @@ postman_redirect_daemon/
 ├── src/                            # Source code
 │   ├── auth_router_final.py        # Main daemon with state machine
 │   └── dynamic_hosts/              # Optional hosts management
-│       └── hosts_manager.py        # Runtime hosts file manager
+│       └── hosts_manager.py        # Runtime hosts file manager if you need it
 │
 ├── config/                         # Configuration files
 │   ├── config.json.template        # Configuration template
