@@ -9,7 +9,7 @@ Designed for enterprise MDM deployment with ZERO external dependencies.
 Uses only Python standard library for maximum compatibility and security.
 
 Usage:
-    sudo python3 auth_router_final.py [--config config.json] [--mode enforce|monitor]
+    sudo python3 auth_router_final.py [--config config.json] [--dynamic-hosts]
 
 Enterprise Features:
     - State machine tracking of authentication flow
@@ -44,13 +44,7 @@ from typing import Dict, Optional, Tuple, Any, List
 
 # Configure logging
 def setup_logging(log_file=None, max_bytes=10485760, backup_count=5):
-    """Set up logging configuration with rotation support.
-    
-    Args:
-        log_file: Path to log file (default: /var/log/postman-auth.log)
-        max_bytes: Maximum size of log file before rotation (default: 10MB)
-        backup_count: Number of backup files to keep (default: 5)
-    """
+    """Set up logging with rotation support."""
     if log_file is None:
         log_file = '/var/log/postman-auth.log'
     
@@ -94,82 +88,30 @@ logger = setup_logging()
 class DNSResolver:
     """Resolves real IP addresses for domains to avoid proxy loops.
     
-    When /etc/hosts redirects domains to 127.0.0.1, we need to resolve
-    the real IPs to proxy requests upstream. Uses a hybrid approach for
-    maximum enterprise compatibility:
-    
-    1. Primary: nslookup (universally available, firewall-friendly)
-    2. Fallback: DNS-over-HTTPS via curl (when nslookup fails)
-    3. Last resort: Configured fallback IPs
-    
-    The resolution method can be configured via dns_resolution_method in
-    config.json to override the default hybrid behavior for specific
-    enterprise environments.
-    
-    Attributes:
-        cache: Cache of resolved domain->IP mappings
-        dns_server: External DNS server to use (default: 8.8.8.8)
-        fallback_ips: Dictionary of hostname->IP fallback mappings
-        resolution_method: Method to use ('auto', 'nslookup', 'doh')
+    When /etc/hosts redirects domains to 127.0.0.1, we need the real IPs
+    to proxy requests upstream. Uses nslookup with hardcoded fallbacks.
     """
     
-    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None, 
-                 resolution_method: str = 'auto'):
-        """Initialize DNS resolver.
-        
-        Args:
-            dns_server: External DNS server to use for resolution
-            fallback_ips: Fallback IP addresses for known domains
-            resolution_method: Resolution method ('auto', 'nslookup', 'doh')
-        """
+    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None):
         self.cache: Dict[str, str] = {}
         self.dns_server = dns_server
         self.fallback_ips = fallback_ips or {}
-        self.resolution_method = resolution_method
         self._lock = threading.Lock()
     
     def resolve(self, hostname: str) -> str:
-        """Resolve hostname to real IP address using hybrid approach.
-        
-        Uses the configured resolution method or automatic fallback:
-        1. nslookup (enterprise-friendly, universally available)
-        2. DNS-over-HTTPS (when nslookup fails or is unavailable)
-        3. Configured fallback IPs (last resort)
-        
-        Args:
-            hostname: Domain name to resolve
-            
-        Returns:
-            IP address of the domain
-            
-        Raises:
-            ValueError: If hostname resolution fails completely
-        """
+        """Resolve hostname to real IP address."""
         with self._lock:
-            # Check cache first
             if hostname in self.cache:
                 return self.cache[hostname]
             
-            ip = None
+            ip = self._resolve_with_nslookup(hostname)
+            if ip:
+                self.cache[hostname] = ip
+                logger.info(f"Resolved {hostname} to {ip} via nslookup")
+                return ip
             
-            # Try resolution methods based on configuration
-            if self.resolution_method in ('auto', 'nslookup'):
-                ip = self._resolve_with_nslookup(hostname)
-                if ip:
-                    self.cache[hostname] = ip
-                    logger.info(f"Resolved {hostname} to {ip} via nslookup")
-                    return ip
-            
-            if self.resolution_method in ('auto', 'doh') and not ip:
-                ip = self._resolve_with_doh(hostname)
-                if ip:
-                    self.cache[hostname] = ip
-                    logger.info(f"Resolved {hostname} to {ip} via DNS-over-HTTPS")
-                    return ip
-            
-            # Fallback to configured IPs for known domains
+            # Fallback to hardcoded IPs for known domains
             if not self.fallback_ips:
-                # Default fallbacks if none configured
                 self.fallback_ips = {
                     'identity.getpostman.com': '104.18.36.161',
                     'identity.postman.co': '104.18.37.186',
@@ -182,20 +124,8 @@ class DNSResolver:
             return ip
 
     def _resolve_with_nslookup(self, hostname: str) -> Optional[str]:
-        """Resolve hostname using nslookup command.
-        
-        Uses nslookup to query external DNS server, bypassing /etc/hosts.
-        This is the most enterprise-compatible method as it works through
-        corporate firewalls and doesn't require special access.
-        
-        Args:
-            hostname: Domain name to resolve
-            
-        Returns:
-            IP address if resolution succeeds, None otherwise
-        """
+        """Resolve hostname using nslookup command."""
         try:
-            # Use nslookup with external DNS server
             result = subprocess.run(
                 ['nslookup', hostname, self.dns_server],
                 capture_output=True,
@@ -204,12 +134,9 @@ class DNSResolver:
             )
             
             if result.returncode == 0 and result.stdout:
-                # Parse nslookup output for Address: lines
-                # Example output contains lines like "Address: 104.18.36.161"
                 for line in result.stdout.split('\n'):
                     line = line.strip()
                     if line.startswith('Address:') and not line.endswith('#53'):
-                        # Extract IP after "Address: "
                         parts = line.split(':', 1)
                         if len(parts) == 2:
                             ip = parts[1].strip()
@@ -226,62 +153,8 @@ class DNSResolver:
             logger.error(f"Unexpected error in nslookup for {hostname}: {e}")
             return None
 
-    def _resolve_with_doh(self, hostname: str) -> Optional[str]:
-        """Resolve hostname using DNS-over-HTTPS.
-        
-        Queries Cloudflare's DNS-over-HTTPS service as fallback when
-        nslookup is unavailable or fails. May be blocked in some
-        enterprise environments.
-        
-        Args:
-            hostname: Domain name to resolve
-            
-        Returns:
-            IP address if resolution succeeds, None otherwise
-        """
-        try:
-            # Query Cloudflare's DNS-over-HTTPS service
-            dns_url = f"https://1.1.1.1/dns-query?name={hostname}&type=A"
-            result = subprocess.run(
-                ['curl', '-s', '-H', 'Accept: application/dns-json', dns_url],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0 and result.stdout.strip():
-                import json
-                try:
-                    dns_response = json.loads(result.stdout)
-                    # Extract A records from the response
-                    if 'Answer' in dns_response:
-                        for answer in dns_response['Answer']:
-                            if answer.get('type') == 1:  # A record
-                                ip = answer.get('data')
-                                if ip and self._is_valid_ip(ip):
-                                    return ip
-                except json.JSONDecodeError:
-                    logger.debug(f"Invalid JSON response from DNS-over-HTTPS for {hostname}")
-            
-            logger.debug(f"DNS-over-HTTPS failed for {hostname}")
-            return None
-            
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logger.debug(f"DNS-over-HTTPS command failed for {hostname}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error in DNS-over-HTTPS for {hostname}: {e}")
-            return None
-
     def _is_valid_ip(self, ip: str) -> bool:
-        """Check if string is a valid IPv4 address.
-        
-        Args:
-            ip: String to validate as IP address
-            
-        Returns:
-            True if valid IPv4 address, False otherwise
-        """
+        """Check if string is a valid IPv4 address."""
         try:
             parts = ip.split('.')
             return (len(parts) == 4 and 
@@ -293,18 +166,11 @@ class DNSResolver:
 class AuthState(Enum):
     """Authentication flow states for the state machine."""
     IDLE = "idle"
-    AUTH_INIT = "auth_init"
-    LOGIN_REDIRECT = "login_redirect"
+    AUTH_INIT = "auth_init"  # Initial auth request received, ready to intercept
     SAML_FLOW = "saml_flow"
     OAUTH_CONTINUATION = "oauth_continuation"
-    COMPLETE = "complete"
 
 
-class OperationMode(Enum):
-    """Operation modes for the daemon."""
-    ENFORCE = "enforce"  # Force SAML authentication
-    MONITOR = "monitor"  # Log but don't redirect
-    TEST = "test"       # Test mode with verbose logging
 
 
 class AuthStateMachine:
@@ -318,13 +184,8 @@ class AuthStateMachine:
     │IDLE │ ──────────────────────────→ │AUTH_INIT  │
     └─────┘                             └───────────┘
        ↑                                       │
-       │                                       │ /login?auth_challenge=...
-       │ timeout (30s)                         ↓
-       │                                ┌──────────────┐
-       │                                │LOGIN_REDIRECT│
-       │                                └──────────────┘
-       │                                       │
-       │                                       │ redirect to SAML
+       │                                       │ intercept /login
+       │ timeout (30s)                         │ redirect to SAML
        │                                       ↓
        │                                ┌─────────────┐
        │                                │SAML_FLOW    │
@@ -333,15 +194,11 @@ class AuthStateMachine:
        │                                       │ /continue detected
        │                                       ↓
        │                                ┌──────────────────┐
-       │                                │OAUTH_CONTINUATION│◄──┐
-       │                                └──────────────────┘   │
-       │                                       │               │
-       │                                       │ /browser-auth │ OAuth timeout
-       │                                       │ /success      │ (30s)
-       │                                       ↓               │
-       │ reset after 5s                 ┌─────────────┐        │
-       └──────────────────────────────  │COMPLETE     │────────┘
-                                        └─────────────┘
+       │                                │OAUTH_CONTINUATION│
+       │                                └──────────────────┘
+       │                                       │
+       │ success or timeout (30s)              │
+       └───────────────────────────────────────┘
     
     Critical Rules:
     - NEVER intercept during OAUTH_CONTINUATION state
@@ -358,11 +215,6 @@ class AuthStateMachine:
     """
     
     def __init__(self, timeout_seconds: int = 30, oauth_timeout_seconds: int = 30):
-        """Initialize the state machine.
-        
-        Args:
-            timeout_seconds: Seconds before resetting a stuck session
-        """
         self.current_state = AuthState.IDLE
         self.session_data: Dict[str, Any] = {}
         self.state_entered_at = datetime.now()
@@ -378,12 +230,7 @@ class AuthStateMachine:
         self._lock = threading.Lock()
     
     def transition_to(self, new_state: AuthState, data: Optional[Dict] = None) -> None:
-        """Transition to a new state.
-        
-        Args:
-            new_state: The state to transition to
-            data: Optional data to store for this transition
-        """
+        """Transition to a new state."""
         with self._lock:
             old_state = self.current_state
             self.current_state = new_state
@@ -400,15 +247,7 @@ class AuthStateMachine:
                 logger.debug("Session data cleared on transition to IDLE")
     
     def should_intercept(self, host: str, path: str) -> bool:
-        """Determine if a request should be intercepted based on current state.
-        
-        Args:
-            host: The hostname of the request
-            path: The path of the request
-            
-        Returns:
-            True if the request should be intercepted, False otherwise
-        """
+        """Determine if a request should be intercepted based on current state."""
         with self._lock:
             # Check for timeout
             if self._is_timed_out():
@@ -437,16 +276,7 @@ class AuthStateMachine:
             elif self.current_state == AuthState.AUTH_INIT:
                 # Intercept login page to force SAML
                 if host == "identity.getpostman.com" and path.startswith("/login"):
-                    self.current_state = AuthState.LOGIN_REDIRECT
-                    self.state_entered_at = datetime.now()
-                    return True  # Intercept and redirect
-            
-            elif self.current_state == AuthState.LOGIN_REDIRECT:
-                # We're redirecting to SAML
-                if "/sso/" in path:
-                    self.current_state = AuthState.SAML_FLOW
-                    self.state_entered_at = datetime.now()
-                    return False  # Let SAML flow proceed
+                    return True  # Intercept and redirect to SAML
             
             elif self.current_state == AuthState.SAML_FLOW:
                 # SAML is in progress - check for OAuth continuation on Postman domains
@@ -469,23 +299,14 @@ class AuthStateMachine:
                 # Track id.gw.postman.com for state transition (but don't intercept)
                 if host == "id.gw.postman.com":
                     logger.info(f"OAuth flow reached id.gw.postman.com{path} - tracking but not intercepting")
-                    # Could transition to a new state here if needed
-                    # But always return False to let it pass through naturally
                     return False
                 
-                # Check for successful completion
+                # Check for successful completion - reset to IDLE immediately
                 if "/browser-auth/success" in path:
-                    self.current_state = AuthState.COMPLETE
-                    self.state_entered_at = datetime.now()
-                    self.metrics['successful_auths'] += 1
-                return False
-            
-            elif self.current_state == AuthState.COMPLETE:
-                # Reset after brief delay
-                if (datetime.now() - self.state_entered_at).seconds > 5:
                     self.current_state = AuthState.IDLE
-                    self.state_entered_at = datetime.now()
                     self.session_data = {}
+                    self.metrics['successful_auths'] += 1
+                    logger.info("Authentication completed successfully")
                 return False
             
             # Default: don't intercept
@@ -520,7 +341,6 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
     
     # Class-level configuration (set by daemon)
     config: Dict = {}
-    mode: OperationMode = OperationMode.ENFORCE
     state_machine: AuthStateMachine = None
     dns_resolver: DNSResolver = None
     
@@ -545,7 +365,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         # Log request for debugging
         logger.debug(f"{method} {host}{path}")
         
-        # Check if this is a health check
+        # Check if this is a health check on any host
         if path == '/health':
             self._handle_health_check()
             return
@@ -561,42 +381,22 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                 self.state_machine.record_bypass_attempt(f"Blocked: {query_params}")
                 
                 # Force clean SAML redirect without dangerous params
-                if self.mode == OperationMode.ENFORCE:
-                    # For bypass attempts, strip ALL parameters including auth_challenge
-                    # We want a clean SAML redirect with no bypass vectors
-                    clean_params = {}
-                    # Only preserve continue URL if it's safe
-                    if 'continue' in query_params:
-                        continue_url = query_params['continue'][0] if query_params['continue'] else ''
-                        if self._is_safe_continue_url(continue_url):
-                            clean_params['continue'] = [continue_url]
-                    
-                    # NEVER pass auth_challenge from a bypass attempt
-                    self._handle_unified_saml_redirect(clean_params, None)
-                    return
-        
-        # Check if we should intercept based on state
-        should_intercept = self.state_machine.should_intercept(host, path)
-        
-        if self.mode == OperationMode.MONITOR:
-            # Monitor mode: log but don't actually intercept
-            logger.info(f"MONITOR: Would intercept: {should_intercept} for {host}{path}")
-            self._proxy_to_upstream(host, path, method)
-            return
-        
-        # CRITICAL SECURITY: Must intercept /login to prevent SAML bypass
-        # Direct SAML redirection avoids complex redirect chains that cause connection issues
-        
-        if should_intercept and parsed_url.path in ['/login', '/enterprise/login', '/enterprise/login/authchooser']:
-            # This is the critical interception point for BOTH Desktop and Browser flows
-            auth_challenge = query_params.get('auth_challenge', [''])[0]
-            
-            if self.mode == OperationMode.ENFORCE:
-                # Direct redirect to SAML - handles all cases uniformly, prevents auth bypass
-                self._handle_unified_saml_redirect(query_params, auth_challenge)
+                clean_params = {}
+                if 'continue' in query_params:
+                    continue_url = query_params['continue'][0] if query_params['continue'] else ''
+                    if self._is_safe_continue_url(continue_url):
+                        clean_params['continue'] = [continue_url]
+                
+                self._handle_unified_saml_redirect(clean_params, None)
                 return
         
-        # Default: proxy to upstream
+        should_intercept = self.state_machine.should_intercept(host, path)
+        
+        if should_intercept and parsed_url.path in ['/login', '/enterprise/login', '/enterprise/login/authchooser']:
+            auth_challenge = query_params.get('auth_challenge', [''])[0]
+            self._handle_unified_saml_redirect(query_params, auth_challenge)
+            return
+        
         self._proxy_to_upstream(host, path, method)
     
     def _is_bypass_attempt(self, query_params: Dict) -> bool:
@@ -1018,7 +818,6 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         
         status = {
             'status': 'healthy',
-            'mode': self.mode.value,
             'uptime_seconds': uptime,
             'current_state': self.state_machine.current_state.value,
             'metrics': self.state_machine.metrics,
@@ -1069,15 +868,13 @@ class PostmanAuthDaemon:
         ssl_context: SSL context for HTTPS server
     """
     
-    def __init__(self, config_path: str = "config/config.json", mode: str = "enforce"):
+    def __init__(self, config_path: str = "config/config.json"):
         """Initialize the daemon.
         
         Args:
             config_path: Path to configuration file
-            mode: Operation mode (enforce/monitor/test)
         """
         self.config = self._load_config(config_path)
-        self.mode = OperationMode(mode)
         
         # Get advanced settings with defaults
         advanced = self.config.get('advanced', {})
@@ -1099,26 +896,23 @@ class PostmanAuthDaemon:
         oauth_timeout = advanced.get('oauth_timeout_seconds', 30)
         dns_server = advanced.get('dns_server', '8.8.8.8')
         fallback_ips = advanced.get('dns_fallback_ips', {})
-        dns_resolution_method = advanced.get('dns_resolution_method', 'auto')
         
         self.state_machine = AuthStateMachine(timeout, oauth_timeout)
-        self.dns_resolver = DNSResolver(dns_server, fallback_ips, dns_resolution_method)
+        self.dns_resolver = DNSResolver(dns_server, fallback_ips)
         self.ssl_context = self._setup_ssl_context()
         self.start_time = datetime.now()
         self.server = None
-        self.health_server = None
         
         # Validate configuration
         self._validate_config()
         
         # Configure the handler class with our settings
         PostmanAuthHandler.config = self.config
-        PostmanAuthHandler.mode = self.mode
         PostmanAuthHandler.state_machine = self.state_machine
         PostmanAuthHandler.dns_resolver = self.dns_resolver
         PostmanAuthHandler.daemon = self  # Add reference for uptime calculation
         
-        logger.info(f"Daemon initialized in {self.mode.value} mode")
+        logger.info("Daemon initialized in enforce mode")
     
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from JSON file.
@@ -1209,10 +1003,7 @@ class PostmanAuthDaemon:
         self.server = SSLHTTPServer(server_address, PostmanAuthHandler, self.ssl_context)
         
         logger.info(f"Daemon started on port {self.config.get('listen_port', 443)}")
-        
-        # Start health check server in a separate thread (if configured)
-        if self.config.get('health_check_port'):
-            self._start_health_server()
+        logger.info(f"Health endpoint available at https://localhost:{self.config.get('listen_port', 443)}/health")
         
         try:
             # Run the server
@@ -1222,157 +1013,16 @@ class PostmanAuthDaemon:
         finally:
             self.cleanup()
     
-    def _start_health_server(self):
-        """Start health check server on separate port without SSL."""
-        health_port = self.config['health_check_port']
-        
-        class HealthHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == '/health':
-                    # Reuse the main handler's health check logic
-                    handler = PostmanAuthHandler(self.request, self.client_address, self.server)
-                    handler._handle_health_check()
-                else:
-                    self.send_error(404)
-            
-            def log_message(self, format, *args):
-                pass  # Suppress health check logs
-        
-        # Run health server in a thread
-        def run_health_server():
-            health_address = ('127.0.0.1', health_port)
-            self.health_server = http.server.HTTPServer(health_address, HealthHandler)
-            logger.info(f"Health check endpoint on port {health_port}")
-            self.health_server.serve_forever()
-        
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
-    
     def cleanup(self):
         """Clean up resources on shutdown."""
         if self.server:
             self.server.shutdown()
-        if self.health_server:
-            self.health_server.shutdown()
         logger.info("Daemon shutdown complete")
 
 
-class HostsManager:
-    """Manages dynamic modifications to /etc/hosts file.
-    
-    This class provides safe methods for adding and removing hosts
-    entries dynamically based on authentication flow state.
-    """
-    
-    MANAGED_MARKER = "# Managed by Postman Auth Daemon"
-    
-    def __init__(self, hosts_file: str = "/etc/hosts"):
-        """Initialize hosts manager.
-        
-        Args:
-            hosts_file: Path to hosts file
-        """
-        self.hosts_file = hosts_file
-        self.backup_file = f"{hosts_file}.postman-backup"
-        
-        # Create backup on first use
-        if not os.path.exists(self.backup_file):
-            self._create_backup()
-    
-    def _create_backup(self) -> None:
-        """Create backup of hosts file."""
-        try:
-            subprocess.run(['cp', self.hosts_file, self.backup_file], check=True)
-            logger.info(f"Created hosts backup: {self.backup_file}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to backup hosts file: {e}")
-    
-    def add_entry(self, ip: str, hostname: str) -> bool:
-        """Add a hosts entry.
-        
-        Args:
-            ip: IP address to map to
-            hostname: Hostname to map
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        entry = f"{ip} {hostname} {self.MANAGED_MARKER}"
-        
-        try:
-            # Check if entry already exists
-            with open(self.hosts_file, 'r') as f:
-                if hostname in f.read():
-                    logger.debug(f"Entry already exists for {hostname}")
-                    return True
-            
-            # Add entry
-            with open(self.hosts_file, 'a') as f:
-                f.write(f"\n{entry}")
-            
-            logger.info(f"Added hosts entry: {hostname} -> {ip}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to add hosts entry: {e}")
-            return False
-    
-    def remove_entry(self, hostname: str) -> bool:
-        """Remove a hosts entry.
-        
-        Args:
-            hostname: Hostname to remove
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Read all lines
-            with open(self.hosts_file, 'r') as f:
-                lines = f.readlines()
-            
-            # Filter out lines with our hostname and marker
-            filtered_lines = [
-                line for line in lines
-                if not (hostname in line and self.MANAGED_MARKER in line)
-            ]
-            
-            # Write back
-            with open(self.hosts_file, 'w') as f:
-                f.writelines(filtered_lines)
-            
-            logger.info(f"Removed hosts entry for {hostname}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to remove hosts entry: {e}")
-            return False
-    
-    def cleanup_all(self) -> None:
-        """Remove all managed entries from hosts file."""
-        try:
-            # Read all lines
-            with open(self.hosts_file, 'r') as f:
-                lines = f.readlines()
-            
-            # Filter out lines with our marker
-            filtered_lines = [
-                line for line in lines
-                if self.MANAGED_MARKER not in line
-            ]
-            
-            # Write back
-            with open(self.hosts_file, 'w') as f:
-                f.writelines(filtered_lines)
-            
-            logger.info("Cleaned up all managed hosts entries")
-        except Exception as e:
-            logger.error(f"Failed to cleanup hosts entries: {e}")
-
-
-# Global references for signal handler
+# Global reference for signal handler
 daemon = None
-hosts_manager = None
+hosts_manager = None  # Only populated if --dynamic-hosts flag is used
 
 
 def signal_handler(signum, frame):
@@ -1418,9 +1068,6 @@ def main():
     parser = argparse.ArgumentParser(description='Postman SAML Enforcement Daemon')
     parser.add_argument('--config', default='config/config.json',
                        help='Path to configuration file')
-    parser.add_argument('--mode', choices=['enforce', 'monitor', 'test'],
-                       default='enforce',
-                       help='Operation mode')
     parser.add_argument('--dynamic-hosts', action='store_true',
                        help='Enable dynamic hosts management')
     args = parser.parse_args()
@@ -1431,6 +1078,8 @@ def main():
     
     # Initialize hosts manager if needed
     if args.dynamic_hosts:
+        # Import only when needed to keep main daemon lightweight
+        from dynamic_hosts.hosts_manager import HostsManager
         hosts_manager = HostsManager()
         # Set initial hosts entries
         hosts_manager.add_entry('127.0.0.1', 'identity.getpostman.com')
@@ -1438,7 +1087,7 @@ def main():
     
     try:
         # Create and start daemon
-        daemon = PostmanAuthDaemon(config_path=args.config, mode=args.mode)
+        daemon = PostmanAuthDaemon(config_path=args.config)
         daemon.start()
         
     except KeyboardInterrupt:
