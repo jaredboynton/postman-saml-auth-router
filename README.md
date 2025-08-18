@@ -161,7 +161,7 @@ postman_redirect_daemon/
 ├── tools/                          # Utility scripts
 │   ├── clear_mac_sessions.sh       # macOS session clearing
 │   ├── clear_win_sessions.ps1      # Windows session clearing
-│   ├── create_jamf_package.sh      # JAMF deployment helper
+│   ├── deploy_jamf.sh              # JAMF deployment helper
 │   ├── deploy_intune.ps1           # Intune deployment template
 │   ├── deploy_sccm.ps1             # SCCM deployment template
 │   └── validate_config.py          # Configuration validator
