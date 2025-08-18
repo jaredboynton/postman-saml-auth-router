@@ -1,13 +1,8 @@
 {
-  "_comment": "Unified Configuration Template for Postman SAML Enforcement",
-  "_instructions": "1. Copy this file to config.json, 2. Replace YOUR_* placeholders with actual values",
-  
-  "_required_settings": "The following settings are REQUIRED:",
-  
+  "#1: "Unified Configuration Template for Postman SAML Enforcement",
+  "#2": "1. Copy this file to config.json, 2. Replace YOUR_* placeholders with actual values",  
   "postman_team_name": "YOUR_TEAM_NAME",
-  "_postman_team_name_help": "Your Postman team name. Find this in your Postman URL: https://app.postman.com/team/YOUR_TEAM_NAME",
-  
-  "_idp_configuration": "Identity Provider Configuration (unified schema):",
+  "#3": "Identity Provider Configuration (unified schema):",
   "idp_config": {
     "idp_type": "YOUR_IDP_TYPE",
     "_idp_type_help": "Supported types: 'okta', 'azure', 'ping', 'generic'",

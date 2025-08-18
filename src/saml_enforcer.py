@@ -703,30 +703,18 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         idp_config = self.config.get('idp_config', {})
         idp_type = idp_config.get('idp_type', 'generic')  # Use generic as safe fallback for handler
         
-        # Generate base URL based on IdP type
-        # Use unified 'integration_id' field with fallback to legacy field names for compatibility
+        # Generate base URL based on IdP type using unified integration_id
+        integration_id = idp_config.get('integration_id', '')
+        
+        if not integration_id:
+            logger.error(f"Missing integration_id in {idp_type} configuration")
+            integration_id = 'missing-integration-id'
+        
         if idp_type == 'okta':
-            # Okta-specific SAML URL format
-            integration_id = idp_config.get('integration_id') or idp_config.get('okta_tenant_id', '')
-            if not integration_id:
-                logger.error("Missing integration_id in Okta configuration")
-                integration_id = 'missing-integration-id'
             base_url = f"/sso/okta/{integration_id}/init"
-            
         elif idp_type == 'azure':
-            # Azure AD SAML URL format - uses /sso/adfs/{integration_id}/init
-            integration_id = idp_config.get('integration_id') or idp_config.get('postman_integration_id', '')
-            if not integration_id:
-                logger.error("Missing integration_id in Azure configuration")
-                integration_id = 'missing-integration-id'
             base_url = f"/sso/adfs/{integration_id}/init"
-            
         elif idp_type == 'ping':
-            # PingIdentity SAML URL format
-            integration_id = idp_config.get('integration_id') or idp_config.get('connection_id', '')
-            if not integration_id:
-                logger.error("Missing integration_id in Ping configuration")
-                integration_id = 'missing-integration-id'
             base_url = f"/sso/ping/{integration_id}/init"
             
         else:
@@ -1112,18 +1100,10 @@ class PostmanAuthDaemon:
         
         idp_type = idp_config['idp_type']
         
-        # Validate IdP-specific required fields
-        # Check for unified 'integration_id' field first, then fall back to legacy field names
-        if idp_type == 'okta':
-            if not (idp_config.get('integration_id') or idp_config.get('okta_tenant_id')):
-                raise ValueError("Missing required field for Okta: idp_config.integration_id")
-        elif idp_type == 'azure':
-            if not (idp_config.get('integration_id') or idp_config.get('postman_integration_id')):
-                raise ValueError("Missing required field for Azure: idp_config.integration_id")
-            # Azure may optionally use tenant_id for other purposes
-        elif idp_type == 'ping':
-            if not (idp_config.get('integration_id') or idp_config.get('connection_id')):
-                raise ValueError("Missing required field for Ping: idp_config.integration_id")
+        # Validate required integration_id for all non-generic IdP types
+        if idp_type in ['okta', 'azure', 'ping']:
+            if not idp_config.get('integration_id'):
+                raise ValueError(f"Missing required field for {idp_type}: idp_config.integration_id")
         elif idp_type != 'generic':
             logger.warning(f"Unknown IdP type: {idp_type}. Using generic SAML handling.")
         
