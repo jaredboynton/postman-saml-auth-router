@@ -135,11 +135,11 @@ Organizations often ask: "Can we implement this with our existing security tools
 
 **Short Answer**: No. I analyzed every alternative approach extensively.
 
-**Why Alternatives Fail**: Postman's OAuth authentication flow requires sophisticated session state management that enterprise security platforms cannot provide:
+**Why Alternatives Fail**: OAuth authentication flows inherently require sophisticated session state management that enterprise security platforms fundamentally cannot provide:
 
 - **OAuth Continuation Protection**: The daemon's 4-state machine never intercepts during OAuth `/continue` requests. All alternatives would break this, causing 401 authentication errors.
 - **Desktop Flow Detection**: Complex two-step validation prevents replay attacks. Alternatives cannot track session state across requests.
-- **Application-Specific Logic**: 4 layers of bypass prevention knowing exact Postman parameters (`intent=switch-account`, etc.). Alternatives can be trivially bypassed.
+- **Application-Specific Logic**: 4 layers of bypass prevention understanding application-specific parameters. Alternatives can be trivially bypassed.
 - **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
 
 **What Alternatives Can Do**:
@@ -147,11 +147,11 @@ Organizations often ask: "Can we implement this with our existing security tools
 - ✅ **Complete Blocking**: Prevent all Postman access 
 - ❌ **SAML Enforcement**: Cannot redirect while preserving OAuth
 
-**The Technical Reality**: Infrastructure tools are the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management.
+**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
 
 **Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
 
-**Bottom Line**: Organizations wanting "SAML enforcement while maintaining Postman functionality" have exactly one viable option: this local daemon approach.
+**Bottom Line**: Organizations wanting "SAML enforcement while maintaining OAuth application functionality" have exactly one viable option: application-aware proxy solutions like this local daemon approach.
 
 ## Requirements
 
