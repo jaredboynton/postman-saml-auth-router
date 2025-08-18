@@ -115,21 +115,33 @@ class DNSResolver:
                 logger.info(f"Resolved {hostname} to {ip} via nslookup")
                 return ip
             
-            # Fallback to hardcoded IPs for known domains
+            # Fallback to configured IPs or last resort defaults
             if not self.fallback_ips:
+                # These are Cloudflare IPs as of deployment - should be overridden in config
+                logger.warning("Using default fallback IPs - configure dns_fallback_ips in config for production")
                 self.fallback_ips = {
                     'identity.getpostman.com': '104.18.36.161',
                     'identity.postman.co': '104.18.37.186',
                     'identity.postman.com': '104.18.37.161'
                 }
             
-            ip = self.fallback_ips.get(hostname, '104.18.36.161')
+            ip = self.fallback_ips.get(hostname)
+            if not ip:
+                logger.error(f"No fallback IP configured for {hostname}")
+                # Return localhost to fail safely rather than crash
+                ip = '127.0.0.1'
             self.cache[hostname] = ip
             logger.warning(f"Using fallback IP for {hostname}: {ip}")
             return ip
 
     def _resolve_with_nslookup(self, hostname: str) -> Optional[str]:
-        """Resolve hostname using nslookup command."""
+        """Resolve hostname using multiple methods in order of preference."""
+        # Try DNS-over-HTTPS first for better security and reliability
+        ip = self._resolve_with_doh(hostname)
+        if ip:
+            return ip
+        
+        # Fallback to traditional nslookup
         try:
             result = subprocess.run(
                 ['nslookup', hostname, self.dns_server],
@@ -157,6 +169,35 @@ class DNSResolver:
         except (OSError, ValueError) as e:
             logger.error(f"System error in nslookup for {hostname}: {e}")
             return None
+    
+    def _resolve_with_doh(self, hostname: str) -> Optional[str]:
+        """Resolve hostname using DNS-over-HTTPS for improved security."""
+        try:
+            # Use Cloudflare's DNS-over-HTTPS service
+            url = f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    'Accept': 'application/dns-json',
+                    'User-Agent': 'PostmanAuthDaemon/2.0'
+                }
+            )
+            
+            with urllib.request.urlopen(req, timeout=3) as response:
+                data = json.loads(response.read().decode())
+                if data.get('Answer'):
+                    for answer in data['Answer']:
+                        if answer.get('type') == 1:  # A record
+                            ip = answer.get('data')
+                            if ip and self._is_valid_ip(ip):
+                                logger.debug(f"Resolved {hostname} to {ip} via DoH")
+                                return ip
+        except (urllib.error.URLError, json.JSONDecodeError, KeyError) as e:
+            logger.debug(f"DNS-over-HTTPS failed for {hostname}: {e}")
+        except Exception as e:
+            logger.debug(f"Unexpected error in DoH resolution for {hostname}: {e}")
+        
+        return None
 
     def _is_valid_ip(self, ip: str) -> bool:
         """Check if string is a valid IPv4 address."""
@@ -191,7 +232,7 @@ class AuthStateMachine:
        ↑                                       │
        │                                       │ intercept /login
        │ timeout (30s)                         │ redirect to SAML
-       │                                       ↓
+       │ or reset                              ↓
        │                                ┌─────────────┐
        │                                │SAML_FLOW    │
        │                                └─────────────┘
@@ -204,6 +245,14 @@ class AuthStateMachine:
        │                                       │
        │ success or timeout (30s)              │
        └───────────────────────────────────────┘
+    
+    Valid State Transitions:
+    - IDLE → AUTH_INIT (on authentication request)
+    - AUTH_INIT → SAML_FLOW (on SAML redirect)
+    - AUTH_INIT → IDLE (on timeout)
+    - SAML_FLOW → OAUTH_CONTINUATION (on /continue detection)
+    - SAML_FLOW → IDLE (on timeout)
+    - OAUTH_CONTINUATION → IDLE (on completion or timeout)
     
     Critical Rules:
     - NEVER intercept during OAUTH_CONTINUATION state (breaks auth chain)
@@ -331,7 +380,13 @@ class AuthStateMachine:
         """
         # Check OAuth timeout
         if (datetime.now() - self.state_entered_at).seconds > self.oauth_timeout_seconds:
-            logger.info(f"OAuth continuation timeout ({self.oauth_timeout_seconds}s) - resetting to IDLE")
+            logger.warning(f"OAuth continuation timeout ({self.oauth_timeout_seconds}s) - authentication may have failed")
+            self.metrics['failed_auths'] += 1
+            # Log details for debugging
+            if 'auth_challenge' in self.session_data:
+                logger.info("Timeout occurred during Desktop flow authentication")
+            else:
+                logger.info("Timeout occurred during Browser flow authentication")
             self.current_state = AuthState.IDLE
             self.session_data = {}
             return False
@@ -439,8 +494,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         # Check if we should intercept based on state
         should_intercept = self.state_machine.should_intercept(host, path)
         
-        # CRITICAL SECURITY: Must intercept /login to prevent SAML bypass
-        # Direct SAML redirection avoids complex redirect chains that cause connection issues
+        # Intercept /login requests to enforce SAML authentication
+        # Direct redirection avoids redirect chains that can cause connection issues
         if should_intercept and parsed_url.path in ['/login', '/enterprise/login', '/enterprise/login/authchooser']:
             auth_challenge = query_params.get('auth_challenge', [''])[0]
             self._handle_unified_saml_redirect(query_params, auth_challenge)
@@ -467,9 +522,9 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             logger.warning("Bypass attempt detected: target_team without auth_challenge")
             return True
         
-        # CRITICAL: Block auth_challenge if no Desktop flow in progress
-        # Legitimate Desktop flows MUST start with /client/login which sets desktop_flow_initiated
-        # Any auth_challenge without prior /client/login is a bypass attempt
+        # Block auth_challenge if no Desktop flow in progress
+        # Desktop flows must start with /client/login which sets desktop_flow_initiated
+        # An auth_challenge without prior /client/login indicates a bypass attempt
         if 'auth_challenge' in query_params:
             # Check if this is part of a legitimate Desktop flow
             desktop_flow_initiated = self.state_machine.session_data.get('desktop_flow_initiated', False)
@@ -589,10 +644,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             logger.info("Browser flow detected - redirecting to SAML with team")
             team_name = self.config.get('postman_team_name', 'postman')
             
-            # Use sanitized parameters only - never pass 'intent' or 'target_team'
+            # Use sanitized parameters only
             continue_url = clean_params.get('continue', [None])[0]
-            
-            # CRITICAL: Never pass 'intent' parameter to prevent bypass
             saml_url = self._get_saml_redirect_url(team=team_name, continue_url=continue_url)
         
         # Build absolute redirect URL
@@ -690,8 +743,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         if continue_url:
             query_params['continue'] = continue_url
         
-        # CRITICAL: Never add 'intent' or 'target_team' parameters
-        # These can be used to bypass SAML enforcement
+        # Never add 'intent' or 'target_team' parameters
+        # These parameters can be used to bypass SAML enforcement
         
         return f"{base_url}?{urllib.parse.urlencode(query_params)}"
     
@@ -755,8 +808,8 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             # Wrap with SSL, setting SNI to the original hostname
             context = self._get_upstream_ssl_context()
             
-            # CRITICAL: server_hostname sets SNI for Cloudflare routing
-            # Without this, Cloudflare returns 525 SSL handshake failed
+            # Set SNI (Server Name Indication) for proper SSL/TLS handshake
+            # Required for Cloudflare and other CDN/proxy services to route correctly
             ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
             
             # Build and send request
