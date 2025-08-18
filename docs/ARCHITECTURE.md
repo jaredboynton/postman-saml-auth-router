@@ -13,14 +13,37 @@ Browser/Desktop App → identity.getpostman.com
          ↓
 Local Authentication Daemon (port 443)
          ↓
+Desktop Detection:
+   ├─ Desktop: /client/login → Sets desktop_flow_initiated flag
+   │           ↓
+   │           Server generates auth_challenge
+   │           ↓
+   │           Redirects to /login?auth_challenge=xxx
+   │           ↓
+   │           Daemon validates flag exists (prevents replay)
+   │           ↓
+   │           Preserves auth_challenge through SAML flow
+   │
+   └─ Web: Direct /login request (no auth_challenge)
+         ↓
 State Machine Tracks Authentication Flow
    ├─ IDLE → AUTH_INIT → SAML_FLOW
    ├─ OAUTH_CONTINUATION (30s timeout, never intercept)
    └─ Reset to IDLE after timeout or completion
          ↓
 Intercept at specific points only:
-   ├─ /login (Web + Desktop) → Redirect to Corporate IDP (SAML)
+   ├─ /login → Redirect to Corporate IDP (SAML)
+   │   └─ Desktop: Includes auth_challenge parameter
+   │   └─ Web: Includes continue URL parameter
    └─ OAuth /continue → Pass through to real servers (SNI)
+         ↓
+Session Return:
+   ├─ Desktop: OAuth callback includes auth_challenge
+   │           → Postman validates and opens Desktop app
+   │           → Desktop app receives session token
+   │
+   └─ Web: OAuth callback sets browser cookies
+           → User redirected to Postman web app
 ```
 
 ## Core Components
@@ -110,20 +133,61 @@ HTTP request handler that processes all incoming requests.
 
 ### Desktop Application Flow
 
-1. User clicks "Sign In" in Desktop app
-2. Desktop app calls `/client/login`
-3. Daemon sets `desktop_flow_initiated` flag
-4. Server generates `auth_challenge` parameter
-5. Redirect to `/login?auth_challenge=...`
-6. State: `IDLE` → `AUTH_INIT`
-7. Daemon validates auth_challenge (must have flag set)
-8. Redirects to SAML IdP with auth_challenge preserved
-9. Rest follows Web flow
+**Critical: The Desktop flow uses a two-step authentication process with auth_challenge validation**
+
+1. **Desktop app initiates authentication:**
+   - User clicks "Sign In" in Postman Desktop
+   - Desktop app opens browser to `identity.getpostman.com/client/login`
+   
+2. **Daemon tracks Desktop flow initiation:**
+   ```python
+   if "/client" in path:
+       self.session_data['desktop_flow_initiated'] = True
+       return False  # Pass through to real server
+   ```
+   
+3. **Postman server generates auth_challenge:**
+   - Server receives `/client/login` request
+   - Generates unique `auth_challenge` token
+   - Redirects to `/login?auth_challenge=xyz123...`
+   
+4. **Daemon validates auth_challenge:**
+   ```python
+   if 'auth_challenge' in query_params:
+       if not self.state_machine.session_data.get('desktop_flow_initiated'):
+           # BLOCKED: Replay attack attempt
+           return True
+   ```
+   
+5. **SAML redirect preserves auth_challenge:**
+   - Daemon intercepts `/login?auth_challenge=xyz123...`
+   - Validates `desktop_flow_initiated` flag exists
+   - Redirects to SAML IdP with auth_challenge preserved
+   - State: `IDLE` → `AUTH_INIT` → `SAML_FLOW`
+   
+6. **User authenticates with IdP:**
+   - Standard SAML authentication flow
+   - IdP redirects back to Postman with SAML response
+   
+7. **OAuth continuation with auth_challenge:**
+   - Postman processes SAML response
+   - Begins OAuth flow at `/continue`
+   - State: `SAML_FLOW` → `OAUTH_CONTINUATION`
+   - Daemon passes through all requests (never intercepts)
+   - Auth_challenge included in OAuth callback
+   
+8. **Session delivered to Desktop app:**
+   - OAuth completes with `auth_challenge` parameter
+   - Postman server validates auth_challenge
+   - Server triggers deep link: `postman://auth/callback?token=...`
+   - Desktop app receives and stores session token
+   - User is logged into Desktop application
 
 **Desktop vs Web Detection:**
-- **Desktop**: Two-step process with `/client/login` then `/login?auth_challenge=...`
+- **Desktop**: Two-step process with `/client/login` → `/login?auth_challenge=...`
 - **Web**: Direct `/login` request without auth_challenge
-- Both redirect to same SAML endpoint with appropriate parameters
+- **Key difference**: Only Desktop flow has `desktop_flow_initiated` flag and auth_challenge
+- **Security**: Auth_challenge without prior `/client/login` is blocked as replay attack
 
 ## Proxy Architecture
 

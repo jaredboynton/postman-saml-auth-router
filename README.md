@@ -137,22 +137,51 @@ See [Security Documentation](docs/SECURITY.md) for complete details.
 
 ```
 postman_redirect_daemon/
-├── README.md                  # This file
-├── scripts/                   # Management scripts
-│   ├── daemon_manager.sh      # macOS/Linux manager
-│   └── daemon_manager.ps1     # Windows manager
-├── src/                       # Source code
-│   └── auth_router_final.py   # Main daemon
-├── config/                    # Configuration
-│   └── config.json.template   # Config template
-├── ssl/                       # Certificates
-├── tools/                     # Utility scripts
-└── docs/                      # Documentation
-    ├── SECURITY.md
-    ├── ARCHITECTURE.md
-    ├── DEPLOYMENT.md
-    ├── CONFIGURATION.md
-    └── TROUBLESHOOTING.md
+├── README.md                       # This file
+├── CLAUDE.md                       # Project instructions
+├── PROGRESS.md                     # Development progress tracker
+│
+├── scripts/                        # Management scripts
+│   ├── daemon_manager.sh           # macOS/Linux management
+│   └── daemon_manager.ps1          # Windows PowerShell management
+│
+├── src/                            # Source code
+│   ├── auth_router_final.py        # Main daemon with state machine
+│   └── dynamic_hosts/              # Optional hosts management
+│       └── hosts_manager.py        # Runtime hosts file manager
+│
+├── config/                         # Configuration files
+│   ├── config.json.template        # Configuration template
+│   └── config.json                 # Your configuration (git-ignored)
+│
+├── ssl/                            # SSL certificates
+│   ├── cert.conf                   # Certificate configuration
+│   ├── cert.pem                    # SSL certificate (generated)
+│   └── key.pem                     # Private key (generated)
+│
+├── tools/                          # Utility scripts
+│   ├── clear_mac_sessions.sh       # macOS session clearing
+│   ├── clear_win_sessions.ps1      # Windows session clearing
+│   ├── create_jamf_package.sh      # JAMF deployment helper
+│   ├── deploy_intune.ps1           # Intune deployment template
+│   ├── deploy_sccm.ps1             # SCCM deployment template
+│   └── validate_config.py          # Configuration validator
+│
+├── docs/                           # Documentation
+│   ├── SECURITY.md                 # Security model & controls
+│   ├── ARCHITECTURE.md             # Technical architecture
+│   ├── DEPLOYMENT.md               # Enterprise deployment guide
+│   ├── CONFIGURATION.md            # Configuration reference
+│   ├── TROUBLESHOOTING.md          # Troubleshooting guide
+│   ├── TECHNICAL.md                # Implementation details
+│   ├── AUTHENTICATION_FLOW.md      # Flow analysis
+│   ├── MACOS_DEPLOYMENT.md         # macOS-specific guide
+│   ├── WINDOWS_DEPLOYMENT.md       # Windows-specific guide
+│   └── adr/                        # Architecture Decision Records
+│       └── local-enforcement.md    # Why local vs network proxy
+│
+└── logs/                           # Log files (created at runtime)
+    └── postman-auth.log            # Daemon logs
 ```
 
 ## Industry Validation
