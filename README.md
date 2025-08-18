@@ -1,20 +1,39 @@
 # Enterprise SAML Authentication Enforcement for Postman Web and Desktop
 
-## Executive Summary
-
-This enterprise-grade solution enforces SAML-only authentication for **both Postman Web and Postman Desktop** across your organization using existing MDM infrastructure. It requires zero network changes, deploys in minutes, and integrates with your current identity provider (Okta, Azure AD, etc.).
-
-**Key Benefits:**
-- Unified authentication enforcement for Web and Desktop clients
-- Immediate compliance with corporate authentication policies
-- No network infrastructure changes required  
-- 5-minute deployment via existing MDM tools
-- Works across all networks (office, home, VPN)
-- Battle-tested approach used by Microsoft Defender and CrowdStrike
-
 ## What This Is
 
-A **production-ready reference implementation** for enforcing SAML authentication in Postman. This solution has been validated in production environments and demonstrates how to enforce corporate authentication using standard MDM deployment patterns. **Now with full support for both Postman Web (browser) and Postman Desktop applications.**
+**A local HTTPS proxy that forces all Postman authentication through your corporate SSO provider.**
+
+When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider (Okta, Azure AD, etc.) - no choice of authentication methods, no personal accounts, no shadow IT.
+
+## Executive Summary  
+
+- **WHAT**: Local proxy enforcing SAML-only authentication for Postman
+- **WHY**: Prevent shadow IT, enforce compliance, block data exfiltration
+- **HOW**: 5-minute MDM deployment, zero network changes required
+- **WHERE**: Works everywhere - office, home, VPN, coffee shop
+- **RESULT**: 100% SAML enforcement across all devices and networks
+
+## For Security Teams
+
+**Threat Model Addressed:**
+- Unauthorized access via personal Postman accounts
+- Data exfiltration through non-corporate workspaces
+- Shadow IT usage of Postman outside IT control
+- Compliance violations from unmanaged API access
+
+**Security Controls Implemented:**
+- Forced SAML authentication (no bypass possible)
+- Auth challenge replay attack prevention
+- Parameter-based bypass detection and blocking
+- Comprehensive audit logging for SIEM integration
+- Session management with forced termination capability
+
+**Compliance Benefits:**
+- Enforces corporate authentication policies
+- Provides complete audit trail of access attempts
+- Enables immediate session termination for offboarding
+- Supports SOC2, ISO 27001, and industry-specific requirements
 
 ## Why This Solution Matters
 
@@ -102,7 +121,7 @@ The daemon includes a 4-state machine that handles both Web and Desktop authenti
 - `OAUTH_CONTINUATION` - OAuth token exchange (Never intercept, 30s timeout)
 
 **Critical OAuth Protection:**
-- **Never intercepts** `/continue` paths during OAuth state validation
+- **Never intercepts** `/continue` paths - breaking the OAuth state validation chain causes 401 authentication errors
 - 30-second timeout prevents indefinitely stuck OAuth sessions
 - Tracks but doesn't intercept `id.gw.postman.com` domain
 - Preserves `auth_challenge` parameter for Desktop flows
@@ -142,17 +161,35 @@ The daemon includes a 4-state machine that handles both Web and Desktop authenti
 - **Device-Level Enforcement** - No network infrastructure changes required
 - **Compliance Ready** - Full audit logging and session control
 - **Zero External Dependencies** - Uses only Python standard library
-- **Enforce Mode Only** - Daemon always enforces SAML (no monitor/test modes)
 
 ### Security & Monitoring Features
 
 **Bypass Detection & Prevention:**
-- Real-time detection and blocking of authentication bypass attempts
-- Automatic detection of suspicious query parameters (intent=switch-account, target_team, etc.)
-- Auth challenge validation to prevent replay attacks with expired tokens
-- Desktop flow tracking to ensure legitimate authentication sequences
-- Parameter sanitization to remove dangerous bypass vectors
-- Comprehensive logging of all blocked bypass attempts for security auditing
+The daemon implements multiple layers of bypass prevention to ensure SAML cannot be circumvented:
+
+1. **Parameter-Based Bypass Blocking:**
+   - Blocks `intent=switch-account` which triggers Postman's account switching UI
+   - Strips `target_team` parameter that could select non-SAML teams
+   - Removes `force_auth` and `skip_saml` parameters
+   - Sanitizes all dangerous query parameters before processing
+
+2. **Auth Challenge Validation:**
+   - Tracks Desktop flows via `desktop_flow_initiated` flag
+   - Blocks auth_challenge without prior `/client/login` (replay attack prevention)
+   - Validates auth_challenge sequence to prevent token reuse
+   - Logs all suspicious auth_challenge attempts
+
+3. **Continue URL Validation:**
+   - Only allows HTTPS URLs for continue parameter
+   - Restricts to Postman-owned domains only
+   - Blocks external redirects that could leak credentials
+   - Prevents redirect-based bypass attempts
+
+4. **Security Logging:**
+   - All bypass attempts logged with full parameter details
+   - Real-time metrics available via health endpoint
+   - SIEM-ready structured logging for security monitoring
+   - Tracks patterns for threat intelligence
 
 **Enterprise Logging:**
 - Rotating log files with configurable size limits (default: 10MB with 5 backups)
@@ -163,7 +200,7 @@ The daemon includes a 4-state machine that handles both Web and Desktop authenti
 - Health endpoint with real-time metrics and uptime tracking
 
 **Monitoring Capabilities:**
-- `/health` endpoint on the main HTTPS port (443)
+- `/health` endpoint available at `https://localhost:443/health`
 - Real-time metrics including:
   - Total authentication attempts
   - SAML redirects performed
@@ -448,7 +485,6 @@ BUFFER_SIZE = 4096          # Network buffer size for proxying
 DEFAULT_TIMEOUT = 30        # General session timeout (seconds)
 OAUTH_TIMEOUT = 30          # OAuth continuation timeout (seconds)
 HTTPS_PORT = 443            # Main daemon listening port
-HEALTH_PORT = 8443          # Health endpoint port (unused in current version)
 DEFAULT_DNS_SERVER = '8.8.8.8'  # External DNS for IP resolution
 ```
 
@@ -471,9 +507,18 @@ def _handle_request(self):
 ```
 
 **Desktop vs Web Flow Detection:**
-- **Desktop**: Includes `auth_challenge` parameter in login request
-- **Web**: Standard `/login` without auth_challenge
+- **Desktop**: Two-step authentication process:
+  1. Desktop app initiates with `/client/login` (sets tracking flag)
+  2. Server generates `auth_challenge` and redirects to `/login`
+  3. Daemon validates auth_challenge only if step 1 occurred first
+- **Web**: Direct `/login` request without auth_challenge
 - **Both**: Redirect to same SAML endpoint, tracked by state machine
+
+**Auth Challenge Replay Prevention:**
+- Desktop flows MUST start with `/client/login` to set `desktop_flow_initiated` flag
+- Any `auth_challenge` without prior `/client/login` is blocked as replay attempt
+- Prevents attackers from reusing stolen or expired auth challenges
+- Ensures Desktop authentication follows legitimate flow sequence
 
 **Refactored Architecture (v2.1):**
 - Decomposed proxy methods: `_proxy_with_sni()`, `_proxy_direct()`, `_build_request()`, `_send_parsed_response()`

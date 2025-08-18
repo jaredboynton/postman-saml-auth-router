@@ -31,10 +31,7 @@
   
   "_network_configuration": "Network and Port Configuration:",
   "listen_port": 443,
-  "_listen_port_help": "Port for HTTPS daemon (default: 443). Requires root/admin privileges. Change only if 443 is unavailable",
-  
-  "health_check_port": 8443,
-  "_health_check_port_help": "Port for health check endpoint (default: 8443). Used for monitoring daemon status. Accessible via curl http://localhost:8443/health",
+  "_listen_port_help": "Port for HTTPS daemon (default: 443). Requires root/admin privileges. Change only if 443 is unavailable. Health endpoint is available at https://localhost:443/health",
   
   "_advanced_settings": "Advanced Configuration - defaults should work for most deployments:",
   "advanced": {
@@ -47,13 +44,10 @@
     "dns_server": "8.8.8.8",
     "_dns_server_help": "External DNS server for resolving real IP addresses (default: 8.8.8.8). Used to bypass /etc/hosts entries when proxying to upstream servers",
     
-    "dns_resolution_method": "auto",
-    "_dns_resolution_method_help": "DNS resolution method: 'auto' (try nslookup first, then DNS-over-HTTPS), 'nslookup' (enterprise-friendly, works through firewalls), 'doh' (DNS-over-HTTPS, may be blocked in some enterprises). Default: 'auto'",
     
     "dns_fallback_ips": {
       "identity.getpostman.com": "104.18.36.161",
-      "identity.postman.co": "104.18.37.186", 
-      "identity.postman.com": "104.18.37.161"
+      "identity.postman.co": "104.18.37.186"
     },
     "_dns_fallback_ips_help": "Fallback IP addresses if all DNS resolution methods fail. These are current Cloudflare IPs for Postman domains. IMPORTANT: Update these if Postman changes CDN infrastructure or these IPs become outdated. Remove entries to disable fallback for specific domains",
     
@@ -73,11 +67,6 @@
     "_postman_hostname_help": "Primary Postman identity hostname (default: identity.getpostman.com). Change only if Postman modifies their authentication infrastructure"
   },
   
-  "_operation_modes": "Available operation modes for testing and deployment:",
-  "_mode_enforce": "enforce - Production mode: actively intercepts and redirects to SAML (default)",
-  "_mode_monitor": "monitor - Testing mode: logs what would be intercepted without actually redirecting", 
-  "_mode_test": "test - Debug mode: verbose logging for troubleshooting authentication issues",
-  "_mode_usage": "Set mode via command line: sudo python3 auth_router_final.py --mode enforce|monitor|test",
   
   "_deployment_examples": "Example configurations for different Identity Providers:",
   "_examples": {
@@ -127,9 +116,8 @@
     "ISSUE: SSL/TLS errors → Verify certificate trust: 'security find-certificate -c identity.getpostman.com' (macOS) or 'certutil -store Root' (Windows)",
     "ISSUE: Team entry page still shows → Verify postman_team_name is correct and daemon is in enforce mode",
     "ISSUE: ERR_TOO_MANY_REDIRECTS → Restart daemon to reset state machine: './daemon_manager.sh restart'",
-    "ISSUE: DNS resolution failures → Check logs for 'nslookup failed' or 'DNS-over-HTTPS failed'. Try setting dns_resolution_method to 'nslookup' for enterprise networks or 'doh' if nslookup is unavailable",
-    "ISSUE: Corporate firewall blocking DNS → Set dns_resolution_method to 'nslookup' and ensure external DNS (8.8.8.8) is accessible, or configure dns_server to use internal DNS",
-    "DEBUG: Use monitor mode first: '--mode monitor' to test configuration without affecting users",
-    "DEBUG: Test DNS resolution manually: 'nslookup identity.getpostman.com 8.8.8.8' or 'curl -s https://1.1.1.1/dns-query?name=identity.getpostman.com&type=A'"
+    "ISSUE: DNS resolution failures → Check logs for 'nslookup failed'. Ensure external DNS (8.8.8.8) is accessible or configure dns_server to use internal DNS",
+    "ISSUE: Corporate firewall blocking DNS → Configure dns_server to use your internal DNS server instead of 8.8.8.8",
+    "DEBUG: Test DNS resolution manually: 'nslookup identity.getpostman.com 8.8.8.8'"
   ]
 }

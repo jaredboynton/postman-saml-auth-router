@@ -45,7 +45,6 @@ BUFFER_SIZE = 4096
 DEFAULT_TIMEOUT = 30
 OAUTH_TIMEOUT = 30
 HTTPS_PORT = 443
-HEALTH_PORT = 8443
 DEFAULT_DNS_SERVER = '8.8.8.8'
 
 # Configure logging
@@ -972,7 +971,6 @@ class PostmanAuthDaemon:
     
     Attributes:
         config: Configuration loaded from JSON file
-        mode: Current operation mode (enforce/monitor/test)
         state_machine: Authentication flow state tracker
         ssl_context: SSL context for HTTPS server
     """
@@ -1015,7 +1013,7 @@ class PostmanAuthDaemon:
         PostmanAuthHandler.dns_resolver = self.dns_resolver
         PostmanAuthHandler.daemon = self  # Add reference for uptime calculation
         
-        logger.info("Daemon initialized in enforce mode")
+        logger.info("Daemon initialized successfully")
     
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from JSON file.
@@ -1078,7 +1076,6 @@ class PostmanAuthDaemon:
         self.config.setdefault('ssl_cert', 'ssl/cert.pem')
         self.config.setdefault('ssl_key', 'ssl/key.pem')
         self.config.setdefault('listen_port', HTTPS_PORT)
-        self.config.setdefault('health_check_port', HEALTH_PORT)
     
     def _setup_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context for HTTPS server.

@@ -8,10 +8,10 @@ The Postman SAML Enforcement Daemon intercepts authentication requests and enfor
 
 ### State Machine Design
 
-The daemon uses a 6-state authentication flow tracker:
+The daemon uses a 4-state authentication flow tracker:
 
 ```
-IDLE → AUTH_INIT → LOGIN_REDIRECT → SAML_FLOW → OAUTH_CONTINUATION → COMPLETE
+IDLE → AUTH_INIT → SAML_FLOW → OAUTH_CONTINUATION
 ```
 
 **Why:** This prevents intercepting OAuth continuation requests which must reach real servers for state validation. Breaking the OAuth chain causes 401 errors.
@@ -64,10 +64,8 @@ sudo python3 auth_router_final.py --dynamic-hosts
 
 The daemon uses a hybrid approach to resolve real IPs and bypass `/etc/hosts`:
 
-**Resolution Methods (in order):**
-1. **nslookup** (primary) - Enterprise-friendly, works through corporate firewalls
-2. **DNS-over-HTTPS** (fallback) - When nslookup fails or is unavailable
-3. **Configured fallback IPs** (last resort) - For complete DNS failure
+**Resolution Method:**
+The daemon uses **nslookup** to resolve real IP addresses, bypassing /etc/hosts entries. This is enterprise-friendly and works through corporate firewalls. If nslookup fails, it falls back to configured IP addresses.
 
 ```python
 # Get real IP despite hosts file using hybrid approach
@@ -81,7 +79,6 @@ ssl_socket = context.wrap_socket(raw_socket, server_hostname='identity.getpostma
 ```json
 {
   "advanced": {
-    "dns_resolution_method": "auto",  // "auto", "nslookup", or "doh"
     "dns_server": "8.8.8.8",
     "dns_fallback_ips": {
       "identity.getpostman.com": "104.18.36.161"
@@ -92,8 +89,8 @@ ssl_socket = context.wrap_socket(raw_socket, server_hostname='identity.getpostma
 
 **Enterprise Considerations:**
 - **nslookup** is universally available and firewall-friendly
-- **DNS-over-HTTPS** may be blocked by corporate security policies
 - **Fallback IPs** ensure service continuity during DNS outages
+- IPs can be customized in config for specific network environments
 
 **Why SNI matters:** Cloudflare requires correct Server Name Indication (SNI) to route requests. Without this, connections fail with SSL errors.
 
@@ -197,30 +194,17 @@ certutil -addstore -f "Root" cert.pem
             "identity.postman.co": "104.18.37.186"
         }
     },
-    "listen_port": 443,
-    "health_check_port": 8443
+    "listen_port": 443
 }
 ```
 
-## Operation Modes
+## Running the Daemon
 
-### Enforce Mode (Production)
 ```bash
-sudo python3 auth_router_final.py --mode enforce
+sudo python3 auth_router_final.py [--config config.json] [--dynamic-hosts]
 ```
-Actively redirects to SAML, prevents bypass attempts.
 
-### Monitor Mode (Testing)
-```bash
-sudo python3 auth_router_final.py --mode monitor
-```
-Logs what would be intercepted without actually redirecting.
-
-### Test Mode (Debugging)
-```bash
-sudo python3 auth_router_final.py --mode test
-```
-Verbose logging for troubleshooting authentication issues.
+The daemon actively redirects all authentication to SAML and prevents bypass attempts.
 
 ## Logging Configuration
 
@@ -264,7 +248,7 @@ All security-relevant events are logged with appropriate severity:
 
 ### Health Check Endpoint
 ```bash
-curl http://localhost:8443/health
+curl https://localhost:443/health
 ```
 
 Returns:
