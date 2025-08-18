@@ -4,6 +4,10 @@
 
 A local authentication proxy that forces all Postman sign-ins through your corporate SSO provider, preventing shadow IT and ensuring compliance across your entire fleet.
 
+## 📖 Essential Reading
+
+**[Why This Solution Is Necessary - Technical Assessment](docs/ANALYSIS_OF_ALTERNATIVES.md)** - Before implementing, understand why enterprise security tools (CrowdStrike, Zscaler, F5) cannot achieve SAML enforcement for Postman. This comprehensive technical assessment explains the architectural requirements and why a local daemon is the only viable approach.
+
 ## What This Does & How It Works
 
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
