@@ -15,10 +15,23 @@ sudo ./scripts/daemon_manager.sh trust-cert
 ```
 
 ### Port 443 Already in Use
+
+**Important**: The daemon MUST listen on port 443 for HTTPS interception to work properly. Browsers always connect to port 443 for HTTPS URLs.
+
 ```bash
-# The daemon_manager script handles this automatically
+# Find what's using port 443
+sudo lsof -i :443  # macOS/Linux
+netstat -ano | findstr :443  # Windows
+
+# The daemon_manager script handles basic conflicts
 sudo ./scripts/daemon_manager.sh restart
 ```
+
+**For persistent port conflicts or enterprise environments**, see the comprehensive port forwarding and reverse proxy solutions in the deployment guides:
+- **macOS**: See [MACOS_DEPLOYMENT.md](MACOS_DEPLOYMENT.md#port-443-already-in-use) for 6 different resolution options including nginx, Apache, pfctl, socat, Caddy, and HAProxy configurations
+- **Windows**: See [WINDOWS_DEPLOYMENT.md](WINDOWS_DEPLOYMENT.md#port-443-already-in-use) for IIS ARR, Apache, nginx, netsh port proxy, and SNI-based routing solutions
+
+Administrators can configure the daemon to listen on any available port (8443, 9443, 10443, etc.) when using proper reverse proxy or port forwarding configurations.
 
 ### Certificate Missing or Expired
 ```bash

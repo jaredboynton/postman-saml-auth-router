@@ -116,7 +116,7 @@ sudo ./scripts/daemon_manager.sh cleanup
 - Ping Identity
 - Any SAML 2.0 provider
 
-**Scale:** Deploy identically to 10 or 10,000 devices via MDM.
+**Scale:** Deploy identically to 10 or 10,000 devices via MDM. Port conflicts are handled through comprehensive reverse proxy and port forwarding configurations for enterprise environments.
 
 See platform-specific deployment guides: [macOS](docs/MACOS_DEPLOYMENT.md) and [Windows](docs/WINDOWS_DEPLOYMENT.md) for complete enterprise deployment instructions.
 

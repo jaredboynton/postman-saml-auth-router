@@ -4,6 +4,34 @@
 
 This guide provides comprehensive instructions for deploying the Postman SAML Authentication Router on macOS endpoints using JAMF Pro, Apple Business Manager, or standalone shell scripts.
 
+### Enterprise Deployment Script Features (v1.0)
+
+The JAMF deployment script includes enterprise-grade enhancements:
+
+**Security & Compliance:**
+- Input parameter validation (JAMF parameters 4-7)
+- Integration with JAMF certificate payloads (preferred over self-signed)
+- Secure keychain management
+- No hardcoded credentials
+
+**Reliability & Resilience:**
+- Retry logic with exponential backoff for package downloads
+- Enhanced certificate error handling
+- LaunchDaemon with KeepAlive for automatic restart
+- Comprehensive error checking for all operations
+
+**Enterprise Integration:**
+- JAMF receipt creation for inventory tracking
+- Extension Attribute support for compliance monitoring
+- Smart Group targeting based on Postman.app installation
+- Unified Logging support capability
+
+**Best Practices:**
+- Fallback from certificate payloads to self-signed
+- Proper file permissions (root:wheel ownership)
+- Safe hosts file management with backup
+- ISO-8601 date formats for consistency
+
 ## Prerequisites
 
 ### System Requirements
@@ -339,16 +367,242 @@ security dump-trust-settings -d
 ```
 
 #### Port 443 Already in Use
+
+**Important**: The daemon MUST listen on port 443 for HTTPS interception to work. Browsers always connect to port 443 for HTTPS URLs, and the hosts file can only redirect domains to IP addresses, not specific ports.
+
 ```bash
 # Find process using port 443
 sudo lsof -i :443
 
-# Kill specific process (replace PID)
-sudo kill -9 <PID>
-
-# Alternative: use netstat
-netstat -an | grep :443
+# Identify the process name
+ps aux | grep <PID>
 ```
+
+**Common Port 443 Conflicts on macOS:**
+- **Apache httpd**: Stop with `sudo apachectl stop`
+- **nginx**: Stop with `brew services stop nginx` or `sudo nginx -s stop`
+- **Docker Desktop**: May use port 443 for certain configurations
+- **Node.js applications**: Check for local development servers
+- **Parallels Desktop**: May forward port 443 from VMs
+- **VMware Fusion**: Check NAT configuration
+
+**Resolution Options:**
+
+### Option 1: Stop Conflicting Service (If Not Critical)
+```bash
+# Stop Apache
+sudo apachectl stop
+sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+
+# Stop nginx (if installed via Homebrew)
+brew services stop nginx
+
+# Kill specific process
+sudo kill -9 <PID>
+```
+
+### Option 2: Configure Reverse Proxy (Recommended for Development Machines)
+
+If you need to keep the existing service on port 443, configure it to proxy Postman authentication traffic to the daemon on another available port.
+
+**Choose any available port** for your daemon (e.g., 8443, 9443, 10443, or any unused port). The examples below use 8443, but replace with your chosen port.
+
+#### **For nginx (most common on macOS)**:
+
+1. Configure the daemon to listen on your chosen port:
+   ```json
+   # In config/config.json:
+   {
+     "advanced": {
+       "daemon_port": 8443  # Or 9443, 10443, any available port
+     }
+   }
+   ```
+
+2. Add nginx configuration (update port to match):
+   ```nginx
+   # In /usr/local/etc/nginx/servers/postman-auth.conf
+   server {
+       listen 443 ssl;
+       server_name identity.getpostman.com identity.postman.co;
+       
+       ssl_certificate /path/to/cert.pem;
+       ssl_certificate_key /path/to/key.pem;
+       
+       location / {
+           proxy_pass https://127.0.0.1:8443;  # Update to your port
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_ssl_verify off;
+       }
+   }
+   ```
+
+3. Reload nginx:
+   ```bash
+   nginx -s reload
+   # or if using Homebrew:
+   brew services restart nginx
+   ```
+
+#### **For Apache (built-in on macOS)**:
+
+1. Enable proxy modules in `/etc/apache2/httpd.conf`:
+   ```apache
+   LoadModule proxy_module libexec/apache2/mod_proxy.so
+   LoadModule proxy_http_module libexec/apache2/mod_proxy_http.so
+   LoadModule proxy_https_module libexec/apache2/mod_proxy_https.so
+   ```
+
+2. Add virtual host configuration (update port to match your daemon):
+   ```apache
+   # In /etc/apache2/other/postman-auth.conf
+   <VirtualHost *:443>
+       ServerName identity.getpostman.com
+       ServerAlias identity.postman.co
+       
+       SSLEngine on
+       SSLCertificateFile /path/to/cert.pem
+       SSLCertificateKeyFile /path/to/key.pem
+       
+       ProxyPreserveHost On
+       ProxyPass / https://127.0.0.1:8443/  # Update to your port
+       ProxyPassReverse / https://127.0.0.1:8443/  # Update to your port
+       SSLProxyEngine on
+       SSLProxyVerify none
+   </VirtualHost>
+   ```
+
+3. Restart Apache:
+   ```bash
+   sudo apachectl restart
+   ```
+
+### Option 3: macOS Port Forwarding (pfctl)
+
+Use macOS's packet filter for port forwarding:
+
+1. Choose any available port for your daemon and create forwarding rules:
+   ```bash
+   # Create pf rules file (replace 9443 with your chosen port)
+   echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 9443" | sudo tee /etc/pf-postman.conf
+   ```
+
+2. Load and enable rules:
+   ```bash
+   # Load the rules
+   sudo pfctl -f /etc/pf-postman.conf
+   
+   # Enable packet filter
+   sudo pfctl -e
+   
+   # Check status
+   sudo pfctl -s nat
+   ```
+
+3. Configure daemon to listen on your chosen port:
+   ```json
+   # Update config.json with your port:
+   {
+     "advanced": {
+       "daemon_port": 9443  # Your chosen port
+     }
+   }
+   ```
+
+4. To remove forwarding:
+   ```bash
+   sudo pfctl -F nat  # Flush NAT rules
+   sudo pfctl -d      # Disable packet filter
+   ```
+
+### Option 4: Using socat for Port Forwarding
+
+For a quick solution, use socat to forward traffic:
+
+```bash
+# Install socat
+brew install socat
+
+# Run socat to forward 443 to your chosen port (e.g., 9443, 10443, etc.)
+sudo socat TCP-LISTEN:443,fork,reuseaddr TCP:127.0.0.1:9443
+# Replace 9443 with your daemon's port
+```
+
+### Option 5: Caddy Server (Modern Alternative)
+
+Caddy provides automatic HTTPS and simple configuration:
+
+1. Install Caddy:
+   ```bash
+   brew install caddy
+   ```
+
+2. Create Caddyfile (update port to match your daemon):
+   ```
+   # /usr/local/etc/Caddyfile
+   identity.getpostman.com, identity.postman.co {
+       reverse_proxy https://127.0.0.1:10443 {  # Use your daemon's port
+           transport http {
+               tls_insecure_skip_verify
+           }
+       }
+   }
+   ```
+
+3. Run Caddy:
+   ```bash
+   sudo caddy run --config /usr/local/etc/Caddyfile
+   ```
+
+### Option 6: HAProxy for Advanced Routing
+
+For SNI-based routing when multiple services need port 443:
+
+1. Install HAProxy:
+   ```bash
+   brew install haproxy
+   ```
+
+2. Configure `/usr/local/etc/haproxy.cfg` (update ports to match your setup):
+   ```
+   frontend https_front
+       bind *:443 ssl crt /path/to/combined.pem
+       mode tcp
+       option tcplog
+       
+       # Use SNI for routing
+       use_backend postman_auth if { ssl_fc_sni -i identity.getpostman.com }
+       use_backend postman_auth if { ssl_fc_sni -i identity.postman.co }
+       default_backend original_service
+   
+   backend postman_auth
+       mode tcp
+       server daemon 127.0.0.1:11443 check  # Your daemon's port
+   
+   backend original_service
+       mode tcp
+       server original 127.0.0.1:8080 check  # Your existing service
+   ```
+
+3. Start HAProxy:
+   ```bash
+   brew services start haproxy
+   ```
+
+**Important Considerations**:
+- The daemon can listen on **any available port** (8443, 9443, 10443, 11443, etc.) when properly proxied
+- Update `/usr/local/bin/postman/config/config.json` to set your chosen port:
+  ```json
+  "advanced": {
+      "daemon_port": 11443  // Your chosen port
+  }
+  ```
+- Find available ports: `netstat -an | grep LISTEN | grep -v "127.0.0.1"`
+- Ensure certificates are properly configured for both proxy and daemon
+- Test the full authentication flow after configuration
+- Consider using launchd to start the proxy service at boot
+- Ports above 1024 don't require root privileges on most systems
 
 #### LaunchDaemon Won't Start
 ```bash
@@ -403,26 +657,138 @@ security find-certificate -c "identity.getpostman.com" /Library/Keychains/System
 curl -k -H "Host: identity.getpostman.com" https://127.0.0.1/health
 ```
 
-## Rollback Procedure
+## Rollback & Uninstall Procedures
 
-If deployment needs to be reversed:
+### Method 1: Automated Uninstall (Recommended)
+
+#### Via JAMF Pro Policy
+Deploy the uninstall script through JAMF:
+```bash
+#!/bin/bash
+# JAMF Uninstall Script
+/usr/local/bin/postman/uninstall.sh
+```
+
+Or use the deployment script with uninstall mode:
+```bash
+/path/to/deploy_jamf.sh uninstall
+```
+
+The uninstall process will:
+1. Stop and unload LaunchDaemon
+2. Remove plist file
+3. Remove hosts file entries (using safe markers)
+4. Remove certificates from System keychain
+5. Delete installation directory
+6. Remove JAMF receipts
+7. Clean up logs (optional)
+
+#### Via JAMF Extension Attribute
+Create an Extension Attribute to track and trigger uninstalls:
+```bash
+#!/bin/bash
+# Extension Attribute: Postman Auth Router Removal Status
+
+if [[ -f "/usr/local/bin/postman/uninstall.sh" ]]; then
+    # Run uninstall if flagged for removal
+    if [[ -f "/var/tmp/remove_postman_auth" ]]; then
+        /usr/local/bin/postman/uninstall.sh
+        rm -f /var/tmp/remove_postman_auth
+        echo "<result>Removed</result>"
+    else
+        echo "<result>Installed</result>"
+    fi
+else
+    echo "<result>Not Installed</result>"
+fi
+```
+
+### Method 2: Remote Uninstall via JAMF
+
+For help desk teams to remotely uninstall:
+
+1. **JAMF Remote Command**:
+   ```bash
+   # Create uninstall policy in JAMF Pro
+   # Scope to specific devices or Smart Groups
+   # Execute command:
+   /usr/local/bin/postman/uninstall.sh
+   ```
+
+2. **Self Service Removal**:
+   - Add uninstall script to JAMF Self Service
+   - Allow users to remove if needed
+   - Monitor via Extension Attributes
+
+### Method 3: Manual Cleanup
 
 ```bash
-# Run full cleanup
-sudo ./scripts/scripts/daemon_manager.sh cleanup
+# Run full cleanup script
+sudo ./scripts/daemon_manager.sh cleanup
 
-# Manual cleanup if needed
-sudo launchctl unload /Library/LaunchDaemons/com.company.postman-auth.plist
-sudo rm -f /Library/LaunchDaemons/com.company.postman-auth.plist
-sudo rm -rf /usr/local/postman-auth
-sudo rm -rf /etc/postman-auth
+# Or manual steps if needed:
+sudo launchctl unload /Library/LaunchDaemons/com.postman.authrouter.plist
+sudo rm -f /Library/LaunchDaemons/com.postman.authrouter.plist
+sudo rm -rf /usr/local/bin/postman
+sudo rm -rf /var/log/postman
+
+# Remove hosts entries (between markers)
+sudo sed -i.bak '/# BEGIN POSTMAN-AUTH-ROUTER-JAMF/,/# END POSTMAN-AUTH-ROUTER-JAMF/d' /etc/hosts
+
+# Remove certificates
+sudo security find-certificate -c "identity.getpostman.com" -a -Z | \
+    awk '/SHA-1/{print $NF}' | \
+    xargs -I {} sudo security delete-certificate -Z {} /Library/Keychains/System.keychain
+
+# Remove JAMF receipts
+sudo rm -f /private/var/db/receipts/com.postman.authrouter.*
+
+# Flush DNS cache
+sudo dscacheutil -flushcache
+```
+
+### Uninstall Script (Embedded in Deployment)
+
+The deployment script creates an uninstall script at `/usr/local/bin/postman/uninstall.sh`:
+```bash
+#!/bin/bash
+# Postman Auth Router Uninstall Script
+
+echo "Uninstalling Postman Auth Router..."
+
+# Stop and unload service
+launchctl unload /Library/LaunchDaemons/com.postman.authrouter.plist 2>/dev/null
+
+# Remove plist
+rm -f /Library/LaunchDaemons/com.postman.authrouter.plist
 
 # Remove hosts entries
-sudo ./scripts/scripts/daemon_manager.sh remove-hosts
+sed -i.bak '/# BEGIN POSTMAN-AUTH-ROUTER-JAMF/,/# END POSTMAN-AUTH-ROUTER-JAMF/d' /etc/hosts
 
-# Remove certificate
-sudo security delete-certificate -c "identity.getpostman.com" \
-    /Library/Keychains/System.keychain
+# Remove certificates
+security find-certificate -c "identity.getpostman.com" -a -Z | \
+    awk '/SHA-1/{print $NF}' | \
+    xargs -I {} security delete-certificate -Z {} /Library/Keychains/System.keychain 2>/dev/null
+
+# Remove installation directory
+rm -rf /usr/local/bin/postman
+
+# Remove logs (optional)
+# rm -rf /var/log/postman
+
+# Remove receipt
+rm -f /private/var/db/receipts/com.postman.authrouter.*
+
+echo "Uninstall completed"
+```
+
+### Compliance Monitoring
+
+Monitor uninstall success via JAMF:
+```bash
+# Smart Group criteria for "Needs Removal"
+# Extension Attribute: Postman Auth Router Status
+# Value: "Not Installed" or "Removed"
 ```
 
 ## Security Considerations
