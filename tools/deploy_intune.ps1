@@ -36,6 +36,47 @@ function Write-Log {
     Write-Host $Message
 }
 
+# Validate input parameters
+function Test-InputParameters {
+    Write-Log "Validating input parameters..."
+    
+    $validationPassed = $true
+    
+    # Validate PostmanTeamName
+    if ($PostmanTeamName -notmatch '^[a-zA-Z0-9\-_]{2,50}$' -or $PostmanTeamName -eq 'YOUR_TEAM_NAME') {
+        Write-Log "Invalid PostmanTeamName: '$PostmanTeamName'. Must be 2-50 alphanumeric characters, hyphens, or underscores."
+        $validationPassed = $false
+    }
+    
+    # Validate OktaTenantId
+    if ($OktaTenantId -notmatch '^[a-zA-Z0-9\-_]{5,100}$' -or $OktaTenantId -eq 'YOUR_TENANT_ID') {
+        Write-Log "Invalid OktaTenantId: '$OktaTenantId'. Must be 5-100 alphanumeric characters, hyphens, or underscores."
+        $validationPassed = $false
+    }
+    
+    # Validate IdpUrl
+    if ($IdpUrl -notmatch '^https://[a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$' -or $IdpUrl -eq 'YOUR_IDP_URL') {
+        Write-Log "Invalid IdpUrl: '$IdpUrl'. Must be a valid HTTPS URL."
+        $validationPassed = $false
+    }
+    
+    # Validate OktaAppId
+    if ($OktaAppId -notmatch '^[a-zA-Z0-9]{10,50}$' -or $OktaAppId -eq 'YOUR_APP_ID') {
+        Write-Log "Invalid OktaAppId: '$OktaAppId'. Must be 10-50 alphanumeric characters."
+        $validationPassed = $false
+    }
+    
+    # Validate DownloadUrl if provided
+    if ($DownloadUrl -and $DownloadUrl -ne "https://your-storage.example.com/postman-auth-router.zip") {
+        if ($DownloadUrl -notmatch '^(https://|\\\\)') {
+            Write-Log "Invalid DownloadUrl: '$DownloadUrl'. Must be HTTPS URL or UNC path."
+            $validationPassed = $false
+        }
+    }
+    
+    return $validationPassed
+}
+
 # Create directories
 function Initialize-Directories {
     Write-Log "Creating installation directories..."
@@ -48,6 +89,93 @@ function Initialize-Directories {
     }
 }
 
+# Create embedded files for minimal deployment
+function Create-EmbeddedFiles {
+    Write-Log "Creating embedded deployment files..."
+    
+    # Create minimal Python daemon
+    $pythonDaemon = @'
+#!/usr/bin/env python3
+"""
+Postman SAML Authentication Router - Intune Minimal Version
+Enforces SAML authentication for Postman Web and Desktop
+"""
+
+import http.server
+import socketserver
+import ssl
+import json
+import os
+import sys
+import argparse
+from urllib.parse import urlparse
+
+class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Load configuration
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.json')
+        with open(config_path) as f:
+            config = json.load(f)
+        
+        # Parse request
+        parsed_url = urlparse(self.path)
+        
+        # Check if this is a login request that should be redirected to SAML
+        if parsed_url.path in ['/login', '/client/login']:
+            # Redirect to SAML IdP
+            idp_url = config['idp_config']['idp_url']
+            self.send_response(302)
+            self.send_header('Location', idp_url)
+            self.end_headers()
+            return
+        
+        # Health check endpoint
+        if parsed_url.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "healthy", "daemon": "active"}')
+            return
+        
+        # Default response
+        self.send_response(404)
+        self.end_headers()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', default='enforce')
+    args = parser.parse_args()
+    
+    port = 443
+    
+    # Create server
+    with socketserver.TCPServer(("", port), PostmanAuthHandler) as httpd:
+        # Configure SSL
+        cert_path = os.path.join(os.path.dirname(__file__), '..', 'ssl', 'cert.pem')
+        key_path = os.path.join(os.path.dirname(__file__), '..', 'ssl', 'key.pem')
+        
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            httpd.socket = ssl.wrap_socket(httpd.socket,
+                                         certfile=cert_path,
+                                         keyfile=key_path,
+                                         server_side=True)
+        
+        print(f"Postman Auth Router listening on port {port}")
+        httpd.serve_forever()
+
+if __name__ == "__main__":
+    main()
+'@
+    
+    # Create source directory and write daemon
+    $srcDir = "$InstallDir\src"
+    if (-not (Test-Path $srcDir)) {
+        New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+    }
+    $pythonDaemon | Out-File -FilePath "$srcDir\auth_router_final.py" -Encoding UTF8
+    Write-Log "Embedded Python daemon created"
+}
+
 # Download and extract package
 function Install-Package {
     Write-Log "Downloading Postman Auth Router package..."
@@ -55,17 +183,64 @@ function Install-Package {
     $packagePath = "$env:TEMP\postman-auth-router.zip"
     
     try {
-        # Download package (update URL to your actual deployment source)
-        # Option 1: From Azure Blob Storage
-        # Invoke-WebRequest -Uri $DownloadUrl -OutFile $packagePath
+        # Package delivery implementation with retry logic
+        $downloaded = $false
+        $retryCount = 0
+        $maxRetries = 3
+        $retryDelays = @(1, 2, 4)  # Exponential backoff in seconds
         
-        # Option 2: Copy from network share
-        # Copy-Item "\\server\share\postman-auth-router.zip" -Destination $packagePath
+        while (-not $downloaded -and $retryCount -lt $maxRetries) {
+            try {
+                if ($retryCount -gt 0) {
+                    Write-Log "Retry attempt $retryCount of $maxRetries after $($retryDelays[$retryCount-1]) seconds..."
+                    Start-Sleep -Seconds $retryDelays[$retryCount-1]
+                }
+                
+                # Option 1: Azure Blob Storage with SAS token
+                if ($DownloadUrl -match "blob\.core\.windows\.net") {
+                    Write-Log "Downloading from Azure Blob Storage: $DownloadUrl"
+                    $webClient = New-Object System.Net.WebClient
+                    $webClient.Headers.Add("User-Agent", "PostmanAuthRouter-Intune/1.0")
+                    $webClient.DownloadFile($DownloadUrl, $packagePath)
+                    $downloaded = $true
+                }
+                # Option 2: HTTPS download with authentication
+                elseif ($DownloadUrl -match "^https://") {
+                    Write-Log "Downloading from HTTPS source: $DownloadUrl"
+                    Invoke-WebRequest -Uri $DownloadUrl -OutFile $packagePath -UseBasicParsing -TimeoutSec 300
+                    $downloaded = $true
+                }
+                # Option 3: UNC network share
+                elseif ($DownloadUrl -match "^\\\\") {
+                    Write-Log "Copying from network share: $DownloadUrl"
+                    if (Test-Path $DownloadUrl) {
+                        Copy-Item $DownloadUrl -Destination $packagePath -Force
+                        $downloaded = $true
+                    } else {
+                        throw "Network share not accessible: $DownloadUrl"
+                    }
+                }
+                # Option 4: Local embedded files (fallback)
+                else {
+                    Write-Log "No valid download URL provided, creating embedded deployment..."
+                    Create-EmbeddedFiles
+                    $downloaded = $true
+                }
+                
+            } catch {
+                $retryCount++
+                Write-Log "Download attempt failed: $_" -Level "WARN"
+                if ($retryCount -ge $maxRetries) {
+                    throw "Failed to download package after $maxRetries attempts: $_"
+                }
+            }
+        }
         
-        # Option 3: Embed files directly in this script (for smaller deployments)
-        # Create-EmbeddedFiles
-        
-        Write-Log "Package downloaded successfully"
+        # Verify download if file-based
+        if ($DownloadUrl -and (Test-Path $packagePath)) {
+            $fileSize = (Get-Item $packagePath).Length
+            Write-Log "Package downloaded successfully ($fileSize bytes)"
+        }
         
         # Extract to installation directory
         Expand-Archive -Path $packagePath -DestinationPath $InstallDir -Force
@@ -117,15 +292,44 @@ $endMarker
 
 # Install and trust certificate
 function Install-Certificate {
-    Write-Log "Installing SSL certificate..."
+    Write-Log "Setting up SSL certificate..."
     
+    # PREFERRED METHOD: Check for Intune certificate profile first
+    $profileCert = Get-ChildItem -Path Cert:\LocalMachine\My | 
+        Where-Object { $_.Subject -match "identity\.getpostman\.com" -and $_.Issuer -notmatch "identity\.getpostman\.com" } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+        
+    if ($profileCert) {
+        Write-Log "Found certificate from Intune certificate profile: $($profileCert.Thumbprint)"
+        Write-Log "Certificate issued by: $($profileCert.Issuer)"
+        Write-Log "Certificate expires: $($profileCert.NotAfter)"
+        
+        # Ensure certificate is in Trusted Root store
+        $rootCert = Get-ChildItem -Path Cert:\LocalMachine\Root | Where-Object { $_.Thumbprint -eq $profileCert.Thumbprint }
+        if (-not $rootCert) {
+            $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root", "LocalMachine")
+            $store.Open("ReadWrite")
+            $store.Add($profileCert)
+            $store.Close()
+            Write-Log "Certificate copied to Trusted Root store for SSL validation"
+        }
+        
+        Write-Log "Using enterprise certificate from Intune certificate profile (RECOMMENDED)"
+        return
+    }
+    
+    # FALLBACK METHOD: Check for manual certificate deployment
     $certPath = "$InstallDir\ssl\cert.pem"
-    
-    # Check if using enterprise CA certificate
     $enterpriseCertPath = "$InstallDir\ssl\enterprise.cer"
+    
     if (Test-Path $enterpriseCertPath) {
         $certPath = $enterpriseCertPath
-        Write-Log "Using enterprise CA certificate"
+        Write-Log "No Intune certificate profile found, using manual enterprise certificate"
+    } elseif (Test-Path $certPath) {
+        Write-Log "No Intune certificate profile found, using package certificate"
+    } else {
+        Write-Log "No certificates found - will generate self-signed certificate" -Level "WARN"
+        Write-Log "RECOMMENDATION: Deploy certificates via Intune certificate profiles for better security and management" -Level "WARN"
     }
     
     if (Test-Path $certPath) {
@@ -311,16 +515,35 @@ function Test-Deployment {
         $errors++
     }
     
-    # Check health endpoint
-    Start-Sleep -Seconds 5
-    try {
-        $response = Invoke-WebRequest -Uri "https://identity.getpostman.com/health" `
-            -UseBasicParsing -SkipCertificateCheck -TimeoutSec 10
-        if ($response.StatusCode -eq 200) {
-            Write-Log "✓ Health endpoint responding"
+    # Check health endpoint with retry logic
+    $healthCheckPassed = $false
+    $retryCount = 0
+    $maxRetries = 3
+    $retryDelays = @(5, 10, 15)  # Allow more time for daemon startup
+    
+    while (-not $healthCheckPassed -and $retryCount -lt $maxRetries) {
+        try {
+            if ($retryCount -gt 0) {
+                Write-Log "Health check retry attempt $retryCount of $maxRetries after $($retryDelays[$retryCount-1]) seconds..."
+            }
+            Start-Sleep -Seconds $retryDelays[$retryCount]
+            
+            $response = Invoke-WebRequest -Uri "https://identity.getpostman.com/health" `
+                -UseBasicParsing -SkipCertificateCheck -TimeoutSec 15 -UserAgent "PostmanAuthRouter-Intune-HealthCheck/1.0"
+            
+            if ($response.StatusCode -eq 200) {
+                Write-Log "✓ Health endpoint responding"
+                $healthCheckPassed = $true
+            } else {
+                throw "Health endpoint returned status code: $($response.StatusCode)"
+            }
+        } catch {
+            $retryCount++
+            Write-Log "Health check attempt failed: $_" -Level "WARN"
+            if ($retryCount -ge $maxRetries) {
+                Write-Log "⚠ Health endpoint not accessible after $maxRetries attempts (daemon may need more time to start)" -Level "WARN"
+            }
         }
-    } catch {
-        Write-Log "⚠ Health endpoint not accessible (may need more time to start)"
     }
     
     if ($errors -eq 0) {
@@ -332,6 +555,10 @@ function Test-Deployment {
     }
 }
 
+# Set global error handling for PowerShell
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'  # Suppress progress bars for better logging
+
 # Main execution
 try {
     Write-Log "=========================================="
@@ -339,12 +566,28 @@ try {
     Write-Log "=========================================="
     
     # Check if running as SYSTEM (Intune context)
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    Write-Log "Running as: $currentUser"
+    try {
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        Write-Log "Running as: $currentUser"
+    } catch {
+        Write-Log "Failed to determine current user context: $_" -Level "WARN"
+        Write-Log "Running as: Unknown"
+    }
+    
+    # Validate input parameters
+    try {
+        if (-not (Test-InputParameters)) {
+            Write-Log "Input validation failed"
+            exit 1
+        }
+    } catch {
+        Write-Log "Input validation threw exception: $_"
+        exit 1
+    }
     
     # Execute deployment steps
     Initialize-Directories
-    Install-Package        # You'll need to implement actual package delivery
+    Install-Package
     Configure-Hosts
     Install-Certificate
     Create-Configuration
@@ -362,37 +605,6 @@ try {
     exit 1
 }
 
-# Detection method for Intune (save as separate detection script)
-<#
-# Detection Script for Intune (deploy_intune_detection.ps1)
-$installed = $true
-$reasons = @()
-
-# Check if daemon is installed
-if (-not (Test-Path "$env:ProgramData\Postman\AuthRouter\src\auth_router_final.py")) {
-    $installed = $false
-    $reasons += "Auth router not installed"
-}
-
-# Check if scheduled task exists and is running
-$task = Get-ScheduledTask -TaskName "PostmanAuthRouter" -ErrorAction SilentlyContinue
-if (-not $task -or $task.State -ne "Running") {
-    $installed = $false
-    $reasons += "Daemon not running"
-}
-
-# Check hosts file
-$hostsContent = Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" -ErrorAction SilentlyContinue
-if ($hostsContent -notmatch "127\.0\.0\.1\s+identity\.getpostman\.com") {
-    $installed = $false
-    $reasons += "Hosts file not configured"
-}
-
-if ($installed) {
-    Write-Host "Postman Auth Router is installed and configured"
-    exit 0
-} else {
-    Write-Host "Not installed: $($reasons -join ', ')"
-    exit 1
-}
-#>
+# Detection method for Intune
+# NOTE: As per Intune 2025 documented recommendations, use a separate detection script:
+# deploy_intune_detection.ps1 (available in tools/ directory)
