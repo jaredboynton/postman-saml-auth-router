@@ -71,62 +71,77 @@ class DNSResolver:
     """Resolves real IP addresses for domains to avoid proxy loops.
     
     When /etc/hosts redirects domains to 127.0.0.1, we need to resolve
-    the real IPs to proxy requests upstream. Uses 'dig' command with
-    external DNS to bypass local hosts file.
+    the real IPs to proxy requests upstream. Uses a hybrid approach for
+    maximum enterprise compatibility:
+    
+    1. Primary: nslookup (universally available, firewall-friendly)
+    2. Fallback: DNS-over-HTTPS via curl (when nslookup fails)
+    3. Last resort: Configured fallback IPs
+    
+    The resolution method can be configured via dns_resolution_method in
+    config.json to override the default hybrid behavior for specific
+    enterprise environments.
     
     Attributes:
         cache: Cache of resolved domain->IP mappings
         dns_server: External DNS server to use (default: 8.8.8.8)
+        fallback_ips: Dictionary of hostname->IP fallback mappings
+        resolution_method: Method to use ('auto', 'nslookup', 'doh')
     """
     
-    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None):
+    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None, 
+                 resolution_method: str = 'auto'):
         """Initialize DNS resolver.
         
         Args:
             dns_server: External DNS server to use for resolution
             fallback_ips: Fallback IP addresses for known domains
+            resolution_method: Resolution method ('auto', 'nslookup', 'doh')
         """
         self.cache: Dict[str, str] = {}
         self.dns_server = dns_server
         self.fallback_ips = fallback_ips or {}
+        self.resolution_method = resolution_method
         self._lock = threading.Lock()
     
     def resolve(self, hostname: str) -> str:
-        """Resolve hostname to real IP address.
+        """Resolve hostname to real IP address using hybrid approach.
+        
+        Uses the configured resolution method or automatic fallback:
+        1. nslookup (enterprise-friendly, universally available)
+        2. DNS-over-HTTPS (when nslookup fails or is unavailable)
+        3. Configured fallback IPs (last resort)
         
         Args:
             hostname: Domain name to resolve
             
         Returns:
             IP address of the domain
+            
+        Raises:
+            ValueError: If hostname resolution fails completely
         """
         with self._lock:
             # Check cache first
             if hostname in self.cache:
                 return self.cache[hostname]
             
-            try:
-                # Use dig to resolve via external DNS
-                result = subprocess.run(
-                    ['dig', f'@{self.dns_server}', hostname, 'A', '+short'],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                if result.returncode == 0 and result.stdout.strip():
-                    # Parse dig output - get last IP (actual server, not CNAME)
-                    lines = result.stdout.strip().split('\n')
-                    for line in reversed(lines):
-                        # Check if it's a valid IP
-                        parts = line.split('.')
-                        if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-                            self.cache[hostname] = line
-                            logger.info(f"Resolved {hostname} to {line}")
-                            return line
+            ip = None
             
-            except Exception as e:
-                logger.error(f"DNS resolution failed for {hostname}: {e}")
+            # Try resolution methods based on configuration
+            if self.resolution_method in ('auto', 'nslookup'):
+                ip = self._resolve_with_nslookup(hostname)
+                if ip:
+                    self.cache[hostname] = ip
+                    logger.info(f"Resolved {hostname} to {ip} via nslookup")
+                    return ip
+            
+            if self.resolution_method in ('auto', 'doh') and not ip:
+                ip = self._resolve_with_doh(hostname)
+                if ip:
+                    self.cache[hostname] = ip
+                    logger.info(f"Resolved {hostname} to {ip} via DNS-over-HTTPS")
+                    return ip
             
             # Fallback to configured IPs for known domains
             if not self.fallback_ips:
@@ -141,6 +156,114 @@ class DNSResolver:
             self.cache[hostname] = ip
             logger.warning(f"Using fallback IP for {hostname}: {ip}")
             return ip
+
+    def _resolve_with_nslookup(self, hostname: str) -> Optional[str]:
+        """Resolve hostname using nslookup command.
+        
+        Uses nslookup to query external DNS server, bypassing /etc/hosts.
+        This is the most enterprise-compatible method as it works through
+        corporate firewalls and doesn't require special access.
+        
+        Args:
+            hostname: Domain name to resolve
+            
+        Returns:
+            IP address if resolution succeeds, None otherwise
+        """
+        try:
+            # Use nslookup with external DNS server
+            result = subprocess.run(
+                ['nslookup', hostname, self.dns_server],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                # Parse nslookup output for Address: lines
+                # Example output contains lines like "Address: 104.18.36.161"
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    if line.startswith('Address:') and not line.endswith('#53'):
+                        # Extract IP after "Address: "
+                        parts = line.split(':', 1)
+                        if len(parts) == 2:
+                            ip = parts[1].strip()
+                            if self._is_valid_ip(ip):
+                                return ip
+            
+            logger.debug(f"nslookup failed for {hostname}: {result.stderr}")
+            return None
+            
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.debug(f"nslookup command failed for {hostname}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in nslookup for {hostname}: {e}")
+            return None
+
+    def _resolve_with_doh(self, hostname: str) -> Optional[str]:
+        """Resolve hostname using DNS-over-HTTPS.
+        
+        Queries Cloudflare's DNS-over-HTTPS service as fallback when
+        nslookup is unavailable or fails. May be blocked in some
+        enterprise environments.
+        
+        Args:
+            hostname: Domain name to resolve
+            
+        Returns:
+            IP address if resolution succeeds, None otherwise
+        """
+        try:
+            # Query Cloudflare's DNS-over-HTTPS service
+            dns_url = f"https://1.1.1.1/dns-query?name={hostname}&type=A"
+            result = subprocess.run(
+                ['curl', '-s', '-H', 'Accept: application/dns-json', dns_url],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                import json
+                try:
+                    dns_response = json.loads(result.stdout)
+                    # Extract A records from the response
+                    if 'Answer' in dns_response:
+                        for answer in dns_response['Answer']:
+                            if answer.get('type') == 1:  # A record
+                                ip = answer.get('data')
+                                if ip and self._is_valid_ip(ip):
+                                    return ip
+                except json.JSONDecodeError:
+                    logger.debug(f"Invalid JSON response from DNS-over-HTTPS for {hostname}")
+            
+            logger.debug(f"DNS-over-HTTPS failed for {hostname}")
+            return None
+            
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.debug(f"DNS-over-HTTPS command failed for {hostname}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in DNS-over-HTTPS for {hostname}: {e}")
+            return None
+
+    def _is_valid_ip(self, ip: str) -> bool:
+        """Check if string is a valid IPv4 address.
+        
+        Args:
+            ip: String to validate as IP address
+            
+        Returns:
+            True if valid IPv4 address, False otherwise
+        """
+        try:
+            parts = ip.split('.')
+            return (len(parts) == 4 and 
+                   all(p.isdigit() and 0 <= int(p) <= 255 for p in parts))
+        except:
+            return False
 
 
 class AuthState(Enum):
@@ -166,10 +289,47 @@ class AuthStateMachine:
     This state machine ensures we only intercept at the right points
     in the authentication flow to avoid breaking OAuth continuation.
     
+    State Machine Diagram:
+    ┌─────┐    /client/login or /login  ┌───────────┐
+    │IDLE │ ──────────────────────────→ │AUTH_INIT  │
+    └─────┘                             └───────────┘
+       ↑                                       │
+       │                                       │ /login?auth_challenge=...
+       │ timeout (30s)                         ↓
+       │                                ┌──────────────┐
+       │                                │LOGIN_REDIRECT│
+       │                                └──────────────┘
+       │                                       │
+       │                                       │ redirect to SAML
+       │                                       ↓
+       │                                ┌─────────────┐
+       │                                │SAML_FLOW    │
+       │                                └─────────────┘
+       │                                       │
+       │                                       │ /continue detected
+       │                                       ↓
+       │                                ┌──────────────────┐
+       │                                │OAUTH_CONTINUATION│◄──┐
+       │                                └──────────────────┘   │
+       │                                       │               │
+       │                                       │ /browser-auth │ OAuth timeout
+       │                                       │ /success      │ (30s)
+       │                                       ↓               │
+       │ reset after 5s                 ┌─────────────┐        │
+       └──────────────────────────────  │COMPLETE     │────────┘
+                                        └─────────────┘
+    
+    Critical Rules:
+    - NEVER intercept during OAUTH_CONTINUATION state
+    - OAuth timeout (30s) prevents stuck sessions  
+    - identity.postman.com hosts OAuth state validation
+    - Breaking OAuth chain causes 401 authentication errors
+    
     Attributes:
         current_state: Current state in the authentication flow
         session_data: Data collected during the current session
         state_timeout: Timeout for resetting stuck sessions
+        oauth_timeout_seconds: Specific timeout for OAuth continuation (30s)
         metrics: Performance and security metrics
     """
     
@@ -733,9 +893,10 @@ class PostmanAuthDaemon:
         oauth_timeout = advanced.get('oauth_timeout_seconds', 30)
         dns_server = advanced.get('dns_server', '8.8.8.8')
         fallback_ips = advanced.get('dns_fallback_ips', {})
+        dns_resolution_method = advanced.get('dns_resolution_method', 'auto')
         
         self.state_machine = AuthStateMachine(timeout, oauth_timeout)
-        self.dns_resolver = DNSResolver(dns_server, fallback_ips)
+        self.dns_resolver = DNSResolver(dns_server, fallback_ips, dns_resolution_method)
         self.ssl_context = self._setup_ssl_context()
         self.start_time = datetime.now()
         self.server = None

@@ -70,44 +70,45 @@ This local enforcement pattern is the **industry standard** for endpoint securit
 
 ### How It Works
 
-**Important Security Note:** The hosts file modification approach is a standard enterprise security pattern used by Microsoft Defender, CrowdStrike, and other endpoint protection solutions. In production, this is deployed and protected via MDM policies, preventing user tampering.
+**Important Security Note:** The static hosts file approach is a standard enterprise security pattern used by Microsoft Defender, CrowdStrike, and other endpoint protection solutions. In production, this is deployed and protected via MDM policies, preventing user tampering.
 
 ```
 Browser/Desktop App → identity.getpostman.com
          ↓
-[MDM-protected hosts file redirects to 127.0.0.1]
+[Static hosts file redirects to 127.0.0.1]
          ↓
 Local Authentication Daemon (port 443)
          ↓
 State Machine Tracks Authentication Flow
-   ├─ Web: /login → Redirect to SAML
-   ├─ Desktop: /login?auth_challenge=... → Redirect to SAML  
-   └─ OAuth Continuation: Pass through naturally
+   ├─ IDLE → AUTH_INIT → LOGIN_REDIRECT → SAML_FLOW
+   ├─ OAUTH_CONTINUATION (30s timeout, never intercept)
+   └─ COMPLETE → Reset to IDLE
          ↓
-Validates Postman session cookies
-   ├─ No valid session → Redirect to Corporate IDP (SAML)
-   └─ Valid session → Proxy to real Postman servers (with SNI)
+Intercept at specific points only:
+   ├─ /login (Web + Desktop) → Redirect to Corporate IDP (SAML)
+   └─ OAuth /continue → Pass through to real servers (SNI)
 ```
 
-**Technical Note:** The daemon uses SNI (Server Name Indication) when proxying SSL connections to ensure proper certificate validation with upstream servers.
+**Technical Note:** The daemon uses static hosts entries by default and DNS resolution with SNI (Server Name Indication) when proxying to ensure proper certificate validation with upstream Cloudflare servers.
 
-### Enhanced State Machine for Desktop Support
+### State Machine for Authentication Flow Control
 
-The daemon now includes a sophisticated state machine that handles both Web and Desktop authentication flows:
+The daemon includes a sophisticated 6-state machine that handles both Web and Desktop authentication flows:
 
 **Authentication States:**
-- `IDLE` - No authentication in progress
-- `AUTH_INIT` - Initial auth request received
-- `LOGIN_REDIRECT` - Redirecting to login page
-- `SAML_FLOW` - User in SAML authentication
-- `OAUTH_CONTINUATION` - OAuth token exchange (30-second timeout)
+- `IDLE` - No authentication in progress  
+- `AUTH_INIT` - Initial auth request received (Desktop `/client/login` or Web `/login`)
+- `LOGIN_REDIRECT` - Intercepting login page, redirecting to SAML
+- `SAML_FLOW` - User in SAML authentication with IdP
+- `OAUTH_CONTINUATION` - OAuth token exchange (No intercept, 30s timeout)
 - `COMPLETE` - Authentication completed successfully
 
-**Desktop-Specific Enhancements:**
-- Handles `auth_challenge` parameter from Desktop app
-- Tracks OAuth continuation at `id.gw.postman.com` without intercepting
-- Configurable timeout for OAuth flows (default: 30 seconds)
-- Prevents authentication bypass attempts
+**Critical OAuth Protection:**
+- **Never intercepts** `/continue` paths during OAuth state validation
+- 30-second timeout prevents indefinitely stuck OAuth sessions
+- Tracks but doesn't intercept `id.gw.postman.com` domain
+- Preserves `auth_challenge` parameter for Desktop flows
+- Automatic recovery from network interruptions
 
 ### Security: MDM is MORE Secure Than Server-Side
 
@@ -168,7 +169,7 @@ cp config/config.json.template config/config.json
 vi config/config.json  # Add your team name and IdP details
 
 # 2. Run complete setup
-sudo ./daemon_manager.sh setup
+sudo ./scripts/daemon_manager.sh setup
 
 # 3. Test authentication
 # Browser: https://postman.co
@@ -183,7 +184,7 @@ Copy-Item config\config.json.template config\config.json
 notepad config\config.json  # Add your team name and IdP details
 
 # 2. Run complete setup (as Administrator)
-.\daemon_manager.ps1 setup
+.\scripts\daemon_manager.ps1 setup
 
 # 3. Test authentication
 # Browser: https://postman.co
@@ -194,46 +195,42 @@ notepad config\config.json  # Add your team name and IdP details
 
 #### macOS / Linux
 ```bash
-sudo ./daemon_manager.sh status     # Check daemon status
-sudo ./daemon_manager.sh restart    # Restart daemon
-sudo ./daemon_manager.sh cleanup    # Remove everything
+sudo ./scripts/daemon_manager.sh status     # Check daemon status
+sudo ./scripts/daemon_manager.sh restart    # Restart daemon
+sudo ./scripts/daemon_manager.sh cleanup    # Remove everything
 ```
 
 #### Windows (Run as Administrator)
 ```powershell
-.\daemon_manager.ps1 status     # Check daemon status
-.\daemon_manager.ps1 restart    # Restart daemon
-.\daemon_manager.ps1 cleanup    # Remove everything
+.\scripts\daemon_manager.ps1 status     # Check daemon status
+.\scripts\daemon_manager.ps1 restart    # Restart daemon
+.\scripts\daemon_manager.ps1 cleanup    # Remove everything
 ```
 
 ## Configuration
 
-### Enhanced Configuration Structure
+### Configuration Structure
 
-Edit `config/config.json`:
+Edit `config/config.json` (copy from `config/config.json.template`):
 
 ```json
 {
-  "postman_team_name": "your-team",
-  "okta_tenant_id": "your-tenant-id",
+  "postman_team_name": "YOUR_TEAM_NAME",
+  "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
   
   "idp_config": {
     "idp_type": "okta",
-    "idp_url": "https://your-company.okta.com/app/...",
-    "okta_app_id": "your-app-id"
+    "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/sso/saml",
+    "okta_app_id": "YOUR_OKTA_APP_ID"
   },
   
   "advanced": {
     "dns_server": "8.8.8.8",
-    "dns_fallback_ips": {
-      "identity.getpostman.com": "104.18.36.161",
-      "identity.postman.co": "104.18.37.186"
-    },
-    "log_file": "/var/log/postman-auth.log",
+    "dns_resolution_method": "auto",
     "timeout_seconds": 30,
     "oauth_timeout_seconds": 30,
-    "daemon_port": 443,
-    "health_port": 8443
+    "listen_port": 443,
+    "health_check_port": 8443
   }
 }
 ```
@@ -241,10 +238,12 @@ Edit `config/config.json`:
 **Multiple IDP Support:**
 ```json
 {
-  "idp_type": "azure",
-  "tenant_id": "your-tenant-id",
-  "app_id": "your-app-id",
-  "postman_hostname": "identity.getpostman.com"
+  "postman_team_name": "YOUR_TEAM_NAME",
+  "idp_config": {
+    "idp_type": "azure",
+    "tenant_id": "YOUR_AZURE_TENANT_ID",
+    "app_id": "YOUR_AZURE_APP_ID"
+  }
 }
 ```
 
@@ -274,7 +273,7 @@ The daemon automatically detects and uses certificates in:
 ```bash
 # Deploy via JAMF policy
 sudo installer -pkg PostmanAuthRouter.pkg -target /
-sudo /usr/local/bin/postman/daemon_manager.sh setup
+sudo /usr/local/bin/postman/scripts/daemon_manager.sh setup
 ```
 
 #### Intune (Windows)
@@ -293,7 +292,7 @@ sudo /usr/local/bin/postman/daemon_manager.sh setup
 .\deploy_sccm.ps1 -Mode Install
 ```
 
-See `docs/WINDOWS_DEPLOYMENT.md` for detailed Windows deployment guidance.
+See `docs/WINDOWS_DEPLOYMENT.md` for detailed Windows deployment guidance and `docs/MACOS_DEPLOYMENT.md` for macOS deployment guidance.
 
 ### Enterprise Session Management
 
@@ -307,7 +306,7 @@ Organizations can instantly terminate all existing Postman sessions across their
 
 **Included Session Management Scripts:**
 - `tools/clear_mac_sessions.sh` - Clears all Postman sessions on macOS
-- `tools/clear_windows_sessions.ps1` - Clears all Postman sessions on Windows
+- `tools/clear_win_sessions.ps1` - Clears all Postman sessions on Windows
 
 These scripts clear sessions from:
 - All major browsers (Chrome, Firefox, Safari, Edge)
@@ -329,11 +328,11 @@ jamf policy -trigger clear_postman_sessions
 
 **Windows Deployment (Intune/SCCM)**
 ```powershell
-# Deploy clear_windows_sessions.ps1 via Intune script
+# Deploy clear_win_sessions.ps1 via Intune script
 # Upload to Intune > Devices > Scripts > Add
 
 # Example Intune PowerShell deployment
-Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\ProgramData\Postman\tools\clear_windows_sessions.ps1"
+Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\ProgramData\Postman\tools\clear_win_sessions.ps1"
 
 # Or deploy via SCCM package
 ```
@@ -349,7 +348,7 @@ Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File C:\Pro
 
 *Intune (Windows):*
 1. Navigate to Devices > Scripts > Add
-2. Upload `tools/clear_windows_sessions.ps1`
+2. Upload `tools/clear_win_sessions.ps1`
 3. Configure: Run as System, No user context needed
 4. Assign to device groups
 5. Execute on-demand or scheduled
@@ -398,7 +397,7 @@ This capability ensures that within minutes, all users must re-authenticate thro
 - `config/config.json` - Your IDP configuration (all values externalized)
 - `config/config.json.template` - Template with all configurable options
 - `ssl/cert.pem & key.pem` - SSL certificates
-- `daemon_manager.sh` - Management script for setup and control
+- `scripts/daemon_manager.sh and scripts/daemon_manager.ps1` - Management scripts for setup and control
 
 **Core Logic with State Machine:**
 ```python
@@ -426,7 +425,7 @@ def route_request():
 **Test Fresh Authentication:**
 1. Clear existing sessions (use `tools/clear_*_sessions` scripts)
 2. **Web**: Navigate to https://postman.co
-3. **Desktop**: Open Postman Desktop app
+3. **Desktop**: Open Postman Desktop app and click "Sign In"
 4. Should redirect to your SAML IdP
 
 **Test SAML Flow:**
@@ -446,12 +445,12 @@ def route_request():
 
 **Certificate Issues**
 ```bash
-sudo ./daemon_manager.sh cert    # Regenerate/trust certificates
+sudo ./scripts/daemon_manager.sh cert    # Regenerate/trust certificates
 ```
 
 **Connection Refused**
 ```bash
-sudo ./daemon_manager.sh status  # Check daemon status
+sudo ./scripts/daemon_manager.sh status  # Check daemon status
 sudo lsof -i :443                # Check port binding
 ```
 
@@ -466,12 +465,12 @@ sudo systemctl restart systemd-resolved  # Flush DNS cache (Linux)
 
 **Certificate Issues**
 ```powershell
-.\daemon_manager.ps1 cert        # Regenerate/trust certificates
+.\scripts\daemon_manager.ps1 cert        # Regenerate/trust certificates
 ```
 
 **Connection Refused**
 ```powershell
-.\daemon_manager.ps1 status      # Check daemon status
+.\scripts\daemon_manager.ps1 status      # Check daemon status
 netstat -an | findstr :443       # Check port binding
 ```
 
@@ -492,27 +491,29 @@ ipconfig /flushdns               # Flush DNS cache
 
 ```
 postman_redirect_daemon/
-├── README.md                      # This file
-├── daemon_manager.sh              # macOS/Linux management script
-├── daemon_manager.ps1             # Windows PowerShell management script
+├── README.md                     # This file
+├── scripts/
+│   ├── daemon_manager.sh         # macOS/Linux management script
+│   └── daemon_manager.ps1        # Windows PowerShell management script
 ├── config/
 │   ├── config.json.template      # Configuration template
 │   └── config.json               # Your configuration (do not commit)
 ├── src/
-│   └── auth_router_final.py      # Main daemon with state machine
+│   └── auth_router_final.py      # Daemon with state machine
 ├── ssl/
 │   ├── cert.conf                 # Certificate configuration
-│   └── .gitkeep                  # Ensures directory exists
 ├── tools/
 │   ├── clear_mac_sessions.sh     # macOS session clearing
-│   ├── clear_windows_sessions.ps1 # Windows session clearing
+│   ├── clear_win_sessions.ps1    # Windows session clearing
+│   ├── deploy_jamf.sh            # JAMF deployment script
 │   ├── deploy_intune.ps1         # Intune deployment template
 │   └── deploy_sccm.ps1           # SCCM deployment template
 ├── docs/
 │   ├── TECHNICAL.md              # Technical implementation details
 │   ├── WINDOWS_DEPLOYMENT.md     # Windows-specific deployment guide
-│   └── MDM_DEPLOYMENT_ANALYSIS.md # MDM deployment analysis
-└── archive/                       # Historical/reference files
+│   ├── MACOS_DEPLOYMENT.md       # macOS-specific deployment guide
+│   ├── AUTHENTICATION_FLOW.md    # Authentication flow analysis
+└── PROGRESS.md                   # Project progress tracker
 ```
 
 ## Appendix: Alternative Approaches

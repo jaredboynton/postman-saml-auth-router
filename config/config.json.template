@@ -1,42 +1,126 @@
 {
-  "_comment": "Postman SAML Enforcement Configuration",
+  "_comment": "Postman SAML Enforcement Configuration Template",
+  "_instructions": "1. Copy this file to config.json, 2. Replace YOUR_* placeholders with actual values, 3. Remove _comment and _instructions fields for production",
+  
+  "_required_settings": "The following settings are REQUIRED for basic operation:",
   
   "postman_team_name": "YOUR_TEAM_NAME",
-  "okta_tenant_id": "YOUR_OKTA_TENANT_ID",
+  "_postman_team_name_help": "Your Postman team name (e.g., 'acme-corp'). This is used to auto-populate team selection during SAML redirect. Find this in your Postman team URL: https://app.postman.com/team/YOUR_TEAM_NAME",
   
+  "okta_tenant_id": "YOUR_OKTA_TENANT_ID", 
+  "_okta_tenant_id_help": "Okta tenant ID for SAML integration. Extract from your Postman SAML configuration in Okta (usually a long alphanumeric string like 'db1b1a3764f24213906d682e26fd366f')",
+  
+  "_optional_idp_config": "Identity Provider Configuration - customize for your IdP type:",
   "idp_config": {
-    "_comment": "Identity Provider Configuration",
     "idp_type": "okta",
+    "_idp_type_help": "Supported types: 'okta', 'azure', 'ping', 'generic'. Determines SAML URL format and parameter handling",
+    
     "idp_url": "https://YOUR_COMPANY.okta.com/app/YOUR_APP/YOUR_INTEGRATION_ID/sso/saml",
-    "okta_app_id": "YOUR_OKTA_APP_ID"
+    "_idp_url_help": "Full SAML SSO URL from your IdP. For Okta: found in Applications > YOUR_APP > General > App Embed Link. For Azure: found in Enterprise Applications > YOUR_APP > Single sign-on",
+    
+    "okta_app_id": "YOUR_OKTA_APP_ID",
+    "_okta_app_id_help": "Okta Application ID (optional, used for advanced Okta integrations). Find in Okta Admin > Applications > YOUR_APP > General tab"
   },
   
+  "_ssl_configuration": "SSL Certificate Configuration - daemon requires valid certificates:",
+  "ssl_cert": "ssl/cert.pem",
+  "_ssl_cert_help": "Path to SSL certificate file. Must include SANs for: identity.getpostman.com, identity.postman.co, identity.postman.com, localhost, 127.0.0.1",
+  
+  "ssl_key": "ssl/key.pem", 
+  "_ssl_key_help": "Path to SSL private key file. Must match the certificate above",
+  
+  "_network_configuration": "Network and Port Configuration:",
+  "listen_port": 443,
+  "_listen_port_help": "Port for HTTPS daemon (default: 443). Requires root/admin privileges. Change only if 443 is unavailable",
+  
+  "health_check_port": 8443,
+  "_health_check_port_help": "Port for health check endpoint (default: 8443). Used for monitoring daemon status. Accessible via curl http://localhost:8443/health",
+  
+  "_advanced_settings": "Advanced Configuration - defaults should work for most deployments:",
   "advanced": {
-    "_comment": "Advanced settings - defaults should work for most deployments",
+    "timeout_seconds": 30,
+    "_timeout_seconds_help": "General session timeout in seconds (default: 30). How long before resetting stuck authentication sessions",
+    
+    "oauth_timeout_seconds": 30,
+    "_oauth_timeout_seconds_help": "OAuth continuation timeout in seconds (default: 30). CRITICAL: Time limit for OAuth state machine to complete. Prevents indefinitely stuck sessions. Typical OAuth flows complete in 5-10 seconds",
+    
     "dns_server": "8.8.8.8",
+    "_dns_server_help": "External DNS server for resolving real IP addresses (default: 8.8.8.8). Used to bypass /etc/hosts entries when proxying to upstream servers",
+    
+    "dns_resolution_method": "auto",
+    "_dns_resolution_method_help": "DNS resolution method: 'auto' (try nslookup first, then DNS-over-HTTPS), 'nslookup' (enterprise-friendly, works through firewalls), 'doh' (DNS-over-HTTPS, may be blocked in some enterprises). Default: 'auto'",
+    
     "dns_fallback_ips": {
       "identity.getpostman.com": "104.18.36.161",
-      "identity.postman.co": "104.18.37.186",
+      "identity.postman.co": "104.18.37.186", 
       "identity.postman.com": "104.18.37.161"
     },
+    "_dns_fallback_ips_help": "Fallback IP addresses if all DNS resolution methods fail. These are current Cloudflare IPs for Postman domains. IMPORTANT: Update these if Postman changes CDN infrastructure or these IPs become outdated. Remove entries to disable fallback for specific domains",
+    
     "log_file": "/var/log/postman-auth.log",
-    "timeout_seconds": 30,
-    "oauth_timeout_seconds": 30,
-    "daemon_port": 443,
-    "health_port": 8443,
-    "postman_hostname": "identity.getpostman.com"
+    "_log_file_help": "Log file location (default: /var/log/postman-auth.log on Unix, C:\\ProgramData\\PostmanAuth\\logs\\postman-auth.log on Windows)",
+    
+    "postman_hostname": "identity.getpostman.com",
+    "_postman_hostname_help": "Primary Postman identity hostname (default: identity.getpostman.com). Change only if Postman modifies their authentication infrastructure"
   },
   
+  "_operation_modes": "Available operation modes for testing and deployment:",
+  "_mode_enforce": "enforce - Production mode: actively intercepts and redirects to SAML (default)",
+  "_mode_monitor": "monitor - Testing mode: logs what would be intercepted without actually redirecting", 
+  "_mode_test": "test - Debug mode: verbose logging for troubleshooting authentication issues",
+  "_mode_usage": "Set mode via command line: sudo python3 auth_router_final.py --mode enforce|monitor|test",
+  
+  "_deployment_examples": "Example configurations for different Identity Providers:",
   "_examples": {
-    "azure": {
-      "idp_type": "azure",
-      "tenant_id": "12345678-1234-1234-1234-123456789012",
-      "app_id": "87654321-4321-4321-4321-210987654321"
+    "_okta_example": "Complete Okta configuration example:",
+    "okta": {
+      "postman_team_name": "acme-corp",
+      "okta_tenant_id": "db1b1a3764f24213906d682e26fd366f",
+      "idp_config": {
+        "idp_type": "okta",
+        "idp_url": "https://acme.okta.com/app/postman/exk2e5ac26g30Z4QB5d7/sso/saml",
+        "okta_app_id": "0oa2e5ac26g30Z4QB5d7"
+      }
     },
+    
+    "_azure_example": "Azure AD SAML configuration example:",
+    "azure": {
+      "postman_team_name": "acme-corp",
+      "idp_config": {
+        "idp_type": "azure",
+        "tenant_id": "12345678-1234-1234-1234-123456789012",
+        "app_id": "87654321-4321-4321-4321-210987654321",
+        "idp_url": "https://login.microsoftonline.com/12345678-1234-1234-1234-123456789012/saml2"
+      }
+    },
+    
+    "_ping_example": "PingIdentity configuration example:",
     "ping": {
-      "idp_type": "ping",
-      "idp_url": "https://auth.pingone.com/YOUR_ENV_ID/saml20/idp/sso",
-      "connection_id": "YOUR_CONNECTION_ID"
+      "postman_team_name": "acme-corp", 
+      "idp_config": {
+        "idp_type": "ping",
+        "idp_url": "https://auth.pingone.com/YOUR_ENV_ID/saml20/idp/sso",
+        "connection_id": "YOUR_CONNECTION_ID"
+      }
     }
-  }
+  },
+  
+  "_security_notes": [
+    "SECURITY: Never commit real credentials to version control",
+    "SECURITY: Use enterprise CA certificates instead of self-signed in production", 
+    "SECURITY: Monitor logs for bypass attempts and authentication failures",
+    "SECURITY: Regularly rotate certificates according to your PKI policy",
+    "COMPLIANCE: All authentication attempts are logged for audit purposes"
+  ],
+  
+  "_troubleshooting_help": [
+    "ISSUE: 401 authentication errors → Check OAuth timeout settings and ensure identity.postman.com is NOT in hosts file",
+    "ISSUE: SSL/TLS errors → Verify certificate trust: 'security find-certificate -c identity.getpostman.com' (macOS) or 'certutil -store Root' (Windows)",
+    "ISSUE: Team entry page still shows → Verify postman_team_name is correct and daemon is in enforce mode",
+    "ISSUE: ERR_TOO_MANY_REDIRECTS → Restart daemon to reset state machine: './daemon_manager.sh restart'",
+    "ISSUE: DNS resolution failures → Check logs for 'nslookup failed' or 'DNS-over-HTTPS failed'. Try setting dns_resolution_method to 'nslookup' for enterprise networks or 'doh' if nslookup is unavailable",
+    "ISSUE: Corporate firewall blocking DNS → Set dns_resolution_method to 'nslookup' and ensure external DNS (8.8.8.8) is accessible, or configure dns_server to use internal DNS",
+    "DEBUG: Use monitor mode first: '--mode monitor' to test configuration without affecting users",
+    "DEBUG: Test DNS resolution manually: 'nslookup identity.getpostman.com 8.8.8.8' or 'curl -s https://1.1.1.1/dns-query?name=identity.getpostman.com&type=A'"
+  ]
 }
