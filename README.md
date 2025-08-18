@@ -9,12 +9,25 @@ A local authentication proxy that forces all Postman sign-ins through your corpo
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
 
 ```
-User attempts login → identity.getpostman.com → 127.0.0.1:443 → Daemon evaluates request:
-                           ↑                         ↑              ├─ Bypass detection
-                    (Browser/Desktop)          (via /etc/hosts)     ├─ State machine check
-                                                                     └─ Decision:
-                                                                         ├─ Intercept → SAML redirect
-                                                                         └─ Allow → Proxy to real IP
+1. User attempts login → identity.getpostman.com → 127.0.0.1:443 (via /etc/hosts)
+   (Browser/Desktop)                                      ↓
+                                                    Daemon evaluates:
+                                                    ├─ Bypass detection
+                                                    ├─ State machine check
+                                                    └─ INTERCEPT → Redirect to SAML
+
+2. SAML Authentication → Your IdP (Okta/Azure/etc) → User authenticates
+                                                           ↓
+                                                    Returns to Postman
+
+3. OAuth Continuation → identity.postman.com → 127.0.0.1:443 (via /etc/hosts)
+   (with SAML token)                                   ↓
+                                              Daemon in OAUTH_CONTINUATION state
+                                              └─ ALLOW → Proxy to real Postman
+                                                              ↓
+                                                    OAuth completes, session created
+                                                              ↓
+4. Authenticated → User has valid Postman session (Web or Desktop)
 ```
 
 The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
