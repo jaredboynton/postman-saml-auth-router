@@ -77,8 +77,8 @@ case "$1" in
         fi
         
         # Start daemon
-        echo -e "${GREEN}Starting daemon in ENFORCE mode...${NC}"
-        python3 src/saml_enforcer.py --mode enforce &
+        echo -e "${GREEN}Starting daemon...${NC}"
+        python3 src/saml_enforcer.py &
         
         sleep 2
         if pgrep -f "saml_enforcer" > /dev/null; then

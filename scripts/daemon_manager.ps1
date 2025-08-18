@@ -129,7 +129,7 @@ function Start-Daemon {
     }
     
     # Start daemon as background process
-    Write-ColorOutput "Starting daemon in ENFORCE mode..." -Color Green
+    Write-ColorOutput "Starting daemon..." -Color Green
     $scriptPath = Join-Path (Get-Location) "src\saml_enforcer.py"
     
     if (-not (Test-Path $scriptPath)) {
@@ -139,7 +139,7 @@ function Start-Daemon {
     
     # Start Python daemon
     $processInfo = Start-Process -FilePath $Script:PythonPath `
-        -ArgumentList "$scriptPath --mode enforce" `
+        -ArgumentList "$scriptPath" `
         -WindowStyle Hidden `
         -PassThru `
         -RedirectStandardOutput $Script:Config.LogFile `
