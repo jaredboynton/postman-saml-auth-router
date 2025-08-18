@@ -2,11 +2,11 @@
 
 ## CRITICAL WARNING: These Alternatives Are Fundamentally Incomplete
 
-After analyzing the 1,200+ line Postman SAML Authentication Enforcer daemon, it's clear that **no alternative platform can replicate its sophisticated logic**. This document provides a brutally honest technical assessment of what each approach can and cannot achieve.
+After analyzing the authentication flow and testing many other methods, it's clear that **no alternative solution can replicate the necessary sophisticated logic**. This document provides a brutally honest technical assessment of what each approach can and cannot achieve.
 
 ## The Depth of Daemon Complexity
 
-The daemon is not a simple proxy—it's a sophisticated application-aware authentication orchestrator that implements enterprise-grade capabilities that alternatives fundamentally cannot replicate:
+The daemon is not a simple proxy—it's a sophisticated application-aware authentication orchestrator that implements enterprise-grade security capabilities that alternatives fundamentally cannot replicate:
 
 ### 1. OAuth Continuation Protection (CRITICAL - BREAKS AUTHENTICATION)
 ```python
@@ -14,13 +14,13 @@ The daemon is not a simple proxy—it's a sophisticated application-aware authen
 if self.current_state == AuthState.OAUTH_CONTINUATION:
     return False  # Never intercept during OAuth - would break auth chain
 ```
-- **Daemon**: 4-state machine with precise 30-second OAuth timeout
+- **Daemon**: 4-state machine with TTL and complex bypass detection
 - **All Alternatives**: Stateless policies would intercept OAuth `/continue` requests
 - **Result**: **100% authentication failure** - alternatives break the OAuth chain
 
 **Security Research**: OAuth flows require proper state parameter handling for CSRF protection. According to [OWASP security research](https://auth0.com/docs/secure/attack-protection/state-parameters), "if the authorization request does not send a state parameter, this is extremely interesting from an attacker's perspective" as it enables session hijacking. The daemon's state machine implements these protections while alternatives cannot.
 
-### 2. Desktop Flow Detection & Replay Attack Prevention
+### 2. Desktop Flow Detection & Bypass "Attack" Prevention
 ```python
 # Two-step Desktop authentication with replay protection
 if "/client" in path:
