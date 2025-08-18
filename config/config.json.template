@@ -58,7 +58,16 @@
     "_dns_fallback_ips_help": "Fallback IP addresses if all DNS resolution methods fail. These are current Cloudflare IPs for Postman domains. IMPORTANT: Update these if Postman changes CDN infrastructure or these IPs become outdated. Remove entries to disable fallback for specific domains",
     
     "log_file": "/var/log/postman-auth.log",
-    "_log_file_help": "Log file location (default: /var/log/postman-auth.log on Unix, C:\\ProgramData\\PostmanAuth\\logs\\postman-auth.log on Windows)",
+    "_log_file_help": "Log file location (default: /var/log/postman-auth.log on Unix, C:\\ProgramData\\PostmanAuth\\logs\\postman-auth.log on Windows). Logs automatically rotate at 10MB with 5 backups kept",
+    
+    "log_max_size_mb": 10,
+    "_log_max_size_mb_help": "Maximum log file size in MB before rotation (default: 10). Set to 0 to disable rotation",
+    
+    "log_backup_count": 5,
+    "_log_backup_count_help": "Number of rotated log files to keep (default: 5)",
+    
+    "allow_insecure_upstream": false,
+    "_allow_insecure_upstream_help": "Allow insecure SSL connections to upstream servers (default: false). WARNING: Only enable for debugging SSL issues. This disables certificate verification when proxying to real Postman servers",
     
     "postman_hostname": "identity.getpostman.com",
     "_postman_hostname_help": "Primary Postman identity hostname (default: identity.getpostman.com). Change only if Postman modifies their authentication infrastructure"

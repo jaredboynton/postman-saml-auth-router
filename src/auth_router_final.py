@@ -43,19 +43,43 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Any, List
 
 # Configure logging
-def setup_logging(log_file=None):
-    """Set up logging configuration."""
+def setup_logging(log_file=None, max_bytes=10485760, backup_count=5):
+    """Set up logging configuration with rotation support.
+    
+    Args:
+        log_file: Path to log file (default: /var/log/postman-auth.log)
+        max_bytes: Maximum size of log file before rotation (default: 10MB)
+        backup_count: Number of backup files to keep (default: 5)
+    """
     if log_file is None:
         log_file = '/var/log/postman-auth.log'
+    
     handlers = [logging.StreamHandler()]
     
-    # Only add file handler if we have permission
+    # Try to add rotating file handler if we have permission
     try:
-        file_handler = logging.FileHandler(log_file, mode='a')
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(
+            log_file, 
+            maxBytes=max_bytes,
+            backupCount=backup_count
+        )
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        )
         handlers.append(file_handler)
-    except (PermissionError, OSError):
-        # Running without root, log to console only
-        pass
+    except (PermissionError, OSError, ImportError):
+        # Running without root or RotatingFileHandler not available
+        # Fall back to regular FileHandler
+        try:
+            file_handler = logging.FileHandler(log_file, mode='a')
+            file_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            )
+            handlers.append(file_handler)
+        except (PermissionError, OSError):
+            # Can't write to file, console only
+            pass
     
     logging.basicConfig(
         level=logging.INFO,
@@ -695,8 +719,15 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
                 
                 # Wrap with SSL, setting SNI to the original hostname
                 context = ssl.create_default_context()
-                context.check_hostname = True
-                context.verify_mode = ssl.CERT_REQUIRED
+                
+                # Check if insecure upstream is allowed (for testing/debugging)
+                if self.config.get('advanced', {}).get('allow_insecure_upstream', False):
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    logger.warning("Using insecure upstream connection (allow_insecure_upstream=true)")
+                else:
+                    context.check_hostname = True
+                    context.verify_mode = ssl.CERT_REQUIRED
                 
                 # This is the key: server_hostname sets SNI
                 ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
@@ -763,8 +794,15 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             else:
                 # Normal connection (no special handling needed)
                 context = ssl.create_default_context()
-                context.check_hostname = True
-                context.verify_mode = ssl.CERT_REQUIRED
+                
+                # Check if insecure upstream is allowed (for testing/debugging)
+                if self.config.get('advanced', {}).get('allow_insecure_upstream', False):
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    logger.warning("Using insecure upstream connection (allow_insecure_upstream=true)")
+                else:
+                    context.check_hostname = True
+                    context.verify_mode = ssl.CERT_REQUIRED
                 
                 conn = HTTPSConnection(host, context=context)
                 
@@ -820,7 +858,12 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
     
     def _handle_health_check(self):
         """Handle health check endpoint for monitoring."""
-        uptime = time.time()  # Simplified for standard library
+        # Calculate actual uptime from daemon start time
+        if hasattr(self, 'daemon') and hasattr(self.daemon, 'start_time'):
+            uptime = (datetime.now() - self.daemon.start_time).total_seconds()
+        else:
+            # Fallback if daemon reference not available
+            uptime = 0
         
         # Get IdP config from standardized location
         idp_config = self.config.get('idp_config', {})
@@ -890,6 +933,20 @@ class PostmanAuthDaemon:
         
         # Get advanced settings with defaults
         advanced = self.config.get('advanced', {})
+        
+        # Reconfigure logging with settings from config
+        log_file = advanced.get('log_file', '/var/log/postman-auth.log')
+        log_max_mb = advanced.get('log_max_size_mb', 10)
+        log_backups = advanced.get('log_backup_count', 5)
+        
+        # Reconfigure global logger with rotation settings
+        global logger
+        logger = setup_logging(
+            log_file=log_file,
+            max_bytes=log_max_mb * 1024 * 1024 if log_max_mb > 0 else 0,
+            backup_count=log_backups
+        )
+        
         timeout = advanced.get('timeout_seconds', 30)
         oauth_timeout = advanced.get('oauth_timeout_seconds', 30)
         dns_server = advanced.get('dns_server', '8.8.8.8')
@@ -911,6 +968,7 @@ class PostmanAuthDaemon:
         PostmanAuthHandler.mode = self.mode
         PostmanAuthHandler.state_machine = self.state_machine
         PostmanAuthHandler.dns_resolver = self.dns_resolver
+        PostmanAuthHandler.daemon = self  # Add reference for uptime calculation
         
         logger.info(f"Daemon initialized in {self.mode.value} mode")
     
