@@ -100,7 +100,7 @@ action:
 
 #### What Cannot Be Done
 - ❌ **State machine logic**: IOA rules are stateless event processors ([CrowdStrike IOA Documentation](https://www.crowdstrike.com/en-us/cybersecurity-101/threat-intelligence/ioa-vs-ioc/))
-- ❌ **OAuth timing**: Cannot track 30-second authentication windows
+- ❌ **OAuth timing**: Cannot track authentication window TTL
 - ❌ **Parameter analysis**: Cannot parse and sanitize URL parameters
 - ❌ **SSL proxy**: Cannot intercept and re-route HTTPS traffic with SNI
 - ❌ **DNS resolution**: Cannot replicate enterprise DNS handling
@@ -130,7 +130,7 @@ block_message: "Postman blocked - contact IT"
 - ❌ **State awareness**: Policy engines process individual requests, not flows
 - ❌ **Parameter sanitization**: Cannot implement application-specific bypass prevention
 - ❌ **Desktop flow handling**: Cannot track multi-step authentication sequences
-- ❌ **Precise timing**: Cannot implement 30-second OAuth timeouts
+- ❌ **Precise timing**: Cannot implement TTL effectively for OAuth timeouts
 
 #### Reality Check
 Proxy solutions can **completely block** Postman or **allow all authentication**, but cannot **selectively enforce SAML** while preserving OAuth flows. The middle ground doesn't exist due to stateless policy architecture.
@@ -177,13 +177,12 @@ Network-level approaches can **monitor** or **completely block** Postman domains
 | **Enterprise DNS Handling** | ✅ nslookup + fallback | ❌ No DNS logic | ❌ Basic DNS | ❌ Limited |
 | **Real-time Security Metrics** | ✅ Health endpoint | ❌ Basic logs | ❌ Basic logs | ❌ Basic logs |
 | **Parameter Sanitization** | ✅ App-specific | ❌ No capability | ❌ Limited | ❌ Limited |
-| **Precise OAuth Timing** | ✅ 30s timeout | ❌ No timing | ❌ No timing | ❌ No timing |
-| **Authentication Success Rate** | **~100%** | **~0%** | **~0%** | **~0%** |
+| **Precise OAuth Timing** | ✅ Configurable timeouts | ❌ No timing | ❌ No timing | ❌ No timing |
 
 ## The Fundamental Problem: Application Logic vs Infrastructure Policies
 
 **Why Alternatives Fail:**
-- **Daemon**: Application-aware authentication orchestrator (1,200+ lines of authentication logic)
+- **Daemon**: Application-aware authentication orchestrator (1,200+ lines of authentication and state-tracking logic)
 - **Alternatives**: Infrastructure policy engines designed for basic traffic control
 
 **The OAuth Dilemma:**
