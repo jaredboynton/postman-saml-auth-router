@@ -9,9 +9,12 @@ A local authentication proxy that forces all Postman sign-ins through your corpo
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
 
 ```
-User → postman.co → State Machine Proxy (port 443) → Your SAML IdP
-                         ↑
-                    (via /etc/hosts)
+User attempts login → identity.getpostman.com → 127.0.0.1:443 → Daemon evaluates request:
+                           ↑                         ↑              ├─ Bypass detection
+                    (Browser/Desktop)          (via /etc/hosts)     ├─ State machine check
+                                                                     └─ Decision:
+                                                                         ├─ Intercept → SAML redirect
+                                                                         └─ Allow → Proxy to real IP
 ```
 
 The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
