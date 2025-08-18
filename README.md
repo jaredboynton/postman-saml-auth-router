@@ -111,7 +111,7 @@ Organizations often ask: "Can we implement this with our existing security tools
 
 **The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer, and even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
 
-**Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
+**Comprehensive Analysis**: See [Analysis of Alternatives](docs/ANALYSIS_OF_ALTERNATIVES.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
 
 **Bottom Line**: Organizations wanting "SAML enforcement while maintaining OAuth application functionality" have exactly one viable option: application-aware proxy solutions like this local daemon approach.
 
@@ -228,7 +228,7 @@ postman_redirect_daemon/
     ├── ARCHITECTURE.md             # Technical architecture
     ├── CONFIGURATION.md            # Configuration reference
     ├── TROUBLESHOOTING.md          # Troubleshooting guide
-    ├── ALTERNATIVE_ANALYSIS.md     # Why alternatives cannot work
+    ├── ANALYSIS_OF_ALTERNATIVES.md # Why alternatives cannot work
     ├── TECHNICAL.md                # Implementation details
     ├── AUTHENTICATION_FLOW.md      # Flow analysis, useful for troubleshooting
     ├── MACOS_DEPLOYMENT.md         # macOS deployment guide
@@ -249,7 +249,7 @@ postman_redirect_daemon/
 ### Planning & Evaluation
 - [Security Model & Threat Analysis](docs/SECURITY.md) - Comprehensive security documentation
 - [Architecture Overview](docs/ARCHITECTURE.md) - Technical design and components
-- [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) - Why alternatives cannot work
+- [Analysis of Alternatives](docs/ANALYSIS_OF_ALTERNATIVES.md) - Why alternatives cannot work
 
 ### Implementation
 - [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - JAMF, Apple Business Manager, Munki deployment
