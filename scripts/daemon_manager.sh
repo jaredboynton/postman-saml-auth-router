@@ -78,10 +78,10 @@ case "$1" in
         
         # Start daemon
         echo -e "${GREEN}Starting daemon in ENFORCE mode...${NC}"
-        python3 src/saml_enforcer_final.py --mode enforce &
+        python3 src/saml_enforcer.py --mode enforce &
         
         sleep 2
-        if pgrep -f "saml_enforcer_final" > /dev/null; then
+        if pgrep -f "saml_enforcer" > /dev/null; then
             echo -e "${GREEN}✓ Daemon started successfully!${NC}"
             echo "Test with: curl -k https://identity.getpostman.com/health"
         else
@@ -103,7 +103,7 @@ case "$1" in
         ;;
         
     status)
-        if pgrep -f "saml_enforcer_final" > /dev/null; then
+        if pgrep -f "saml_enforcer" > /dev/null; then
             echo -e "${GREEN}✓ Daemon is running${NC}"
             echo ""
             echo "Health check:"
@@ -349,7 +349,7 @@ EOF
         # 3. Check daemon is running
         echo ""
         echo "Checking daemon status..."
-        if pgrep -f "saml_enforcer_final" > /dev/null; then
+        if pgrep -f "saml_enforcer" > /dev/null; then
             echo -e "  ${GREEN}✓${NC} Daemon is running"
             
             # Check health endpoint
