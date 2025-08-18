@@ -211,7 +211,7 @@ The daemon implements multiple layers of bypass prevention to ensure SAML cannot
 
 ## Optional: Dynamic Hosts Management
 
-For environments where static hosts entries aren't viable, the daemon supports runtime modification of /etc/hosts:
+For environments where permanent hosts file modification is restricted (e.g., strict security policies, read-only system configurations), the daemon supports runtime modification of /etc/hosts:
 
 ```bash
 # Enable dynamic hosts management
@@ -219,12 +219,12 @@ sudo python3 src/auth_router_final.py --config config/config.json --dynamic-host
 ```
 
 This feature:
-- Adds hosts entries when authentication starts
-- Removes entries during OAuth continuation
-- Restores entries after completion
-- Automatically cleans up on shutdown
+- Temporarily adds hosts entries when daemon starts
+- Maintains entries throughout daemon operation
+- Automatically removes entries on daemon shutdown
+- Handles cleanup even on unexpected termination
 
-**Note**: Static hosts entries (default) are recommended for production deployments.
+**Note**: Static hosts entries (default) are recommended for production deployments as they're more reliable and have better performance.
 
 ## Getting Started
 
@@ -456,7 +456,7 @@ This capability ensures that within minutes, all users must re-authenticate thro
 
 **Advantages of Local-Only:**
 - No network infrastructure required
-- No proxy configuration complexity  
+- No corporate network proxy configuration required  
 - Works on any network (office, home, coffee shop)
 - Works with any VPN
 - No single point of failure
@@ -520,11 +520,11 @@ def _handle_request(self):
 - Prevents attackers from reusing stolen or expired auth challenges
 - Ensures Desktop authentication follows legitimate flow sequence
 
-**Refactored Architecture (v2.1):**
-- Decomposed proxy methods: `_proxy_with_sni()`, `_proxy_direct()`, `_build_request()`, `_send_parsed_response()`
-- Simplified `should_intercept()` with helper methods: `_handle_idle_state()`, `_handle_oauth_state()`
-- Better error handling with specific exception types (ConnectionError, TimeoutError, ssl.SSLError)
-- Class attributes instead of global variables for signal handling
+**Core Architecture:**
+- Modular proxy methods: `_proxy_with_sni()`, `_proxy_direct()`, `_build_request()`, `_send_parsed_response()`
+- State machine with helper methods: `_handle_idle_state()`, `_handle_oauth_state()`
+- Robust error handling with specific exception types (ConnectionError, TimeoutError, ssl.SSLError)
+- Class attributes for clean signal handling and resource management
 
 ### Testing & Validation
 
@@ -537,12 +537,13 @@ def _handle_request(self):
 **Test SAML Flow:**
 ```bash
 # Open Browser DevTools > Network tab
-# Watch the redirect chain:
-# 1. postman.co → 401 (Web) or Desktop app launch
-# 2. Redirect to identity.getpostman.com/login
-# 3. Our daemon → Redirect to IDP
-# 4. IDP auth → SAML callback
-# 5. Back to Postman with session
+# Watch the authentication flow:
+# 1. User navigates to postman.co (Web) or opens Desktop app
+# 2. Request to identity.getpostman.com/login (intercepted via hosts file)
+# 3. State: IDLE → AUTH_INIT → Daemon intercepts and redirects to SAML IdP
+# 4. State: SAML_FLOW → User authenticates with IdP
+# 5. OAuth continuation begins → State: OAUTH_CONTINUATION (daemon passes through)
+# 6. Authentication completes → State returns to IDLE with active session
 ```
 
 ### Troubleshooting
@@ -641,16 +642,16 @@ postman_redirect_daemon/
 
 **Operational Complexity**
 - Every customer would require custom configuration on Postman servers
-- Slows down onboarding (weeks vs. minutes)
+- Slows down onboarding (multi-team coordination on both sides)
 - Fragile across customer network diversity
 
 **The MDM Advantage**
 - Implementation: 5 minutes vs. weeks
 - Customer-owned vs. Postman-owned -- you wholly own your authentication flow
 
-### What's New: Desktop Support
+### Key Features: Unified Web & Desktop Support
 
-**Version 2.0 Enhancements:**
+**Technical Capabilities:**
 1. **Unified State Machine** - Tracks both Web and Desktop authentication flows
 2. **Auth Challenge Handling** - Preserves Desktop's auth_challenge parameter
 3. **OAuth Continuation Tracking** - Monitors but doesn't intercept id.gw.postman.com
