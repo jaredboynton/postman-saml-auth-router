@@ -71,6 +71,7 @@ The daemon intercepts authentication requests and enforces SAML-only access thro
 - [Windows Deployment](docs/WINDOWS_DEPLOYMENT.md) - Windows-specific guidance
 - [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - macOS-specific guidance
 - [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis
+- [Alternative Implementations](docs/ALTERNATIVE_IMPLEMENTATIONS.md) - Network-level and proxy integration options
 
 ## Enterprise Deployment
 
@@ -121,7 +122,7 @@ sudo ./scripts/daemon_manager.sh cleanup
 ## Security Highlights
 
 - **Bypass Prevention**: Detects and blocks all known bypass techniques
-- **Session Control**: Instant termination capability for offboarding via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed through MDM
+- **Session Control**: Instant session termination for offboarding and fine-tuning session length via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed via MDM
 - **Audit Logging**: SIEM-ready structured logs
 - **Certificate Security**: Enterprise CA support with MDM deployment
 - **Process Protection**: Cannot be killed even with admin privileges when deployed via MDM
@@ -140,7 +141,6 @@ See [Security Documentation](docs/SECURITY.md) for complete details.
 ```
 postman_redirect_daemon/
 ├── README.md                       # This file
-├── CLAUDE.md                       # Project instructions
 ├── PROGRESS.md                     # Development progress tracker
 │
 ├── scripts/                        # Management scripts
@@ -175,6 +175,7 @@ postman_redirect_daemon/
 │   ├── DEPLOYMENT.md               # Enterprise deployment guide
 │   ├── CONFIGURATION.md            # Configuration reference
 │   ├── TROUBLESHOOTING.md          # Troubleshooting guide
+│   ├── ALTERNATIVE_IMPLEMENTATIONS.md # Network & proxy alternatives
 │   ├── TECHNICAL.md                # Implementation details
 │   ├── AUTHENTICATION_FLOW.md      # Flow analysis
 │   ├── MACOS_DEPLOYMENT.md         # macOS-specific guide
