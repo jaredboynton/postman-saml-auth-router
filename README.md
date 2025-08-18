@@ -133,7 +133,7 @@ See [Security Documentation](docs/SECURITY.md) for complete details.
 
 Organizations often ask: "Can we implement this with our existing security tools like CrowdStrike, Zscaler, or F5 instead?"
 
-**Short Answer**: No. We analyzed every alternative approach extensively.
+**Short Answer**: No. I analyzed every alternative approach extensively.
 
 **Why Alternatives Fail**: Postman's OAuth authentication flow requires sophisticated session state management that enterprise security platforms cannot provide:
 
