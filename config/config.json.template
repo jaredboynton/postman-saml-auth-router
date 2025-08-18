@@ -1,31 +1,28 @@
 {
-  "_comment": "Azure AD SAML Configuration Template for Postman",
-  "_instructions": "1. Copy this file to config.json, 2. Replace YOUR_* placeholders with actual Azure AD values, 3. Remove _comment fields for production",
+  "_comment": "Unified Configuration Template for Postman SAML Enforcement",
+  "_instructions": "1. Copy this file to config.json, 2. Replace YOUR_* placeholders with actual values",
   
-  "_required_settings": "The following settings are REQUIRED for Azure AD integration:",
+  "_required_settings": "The following settings are REQUIRED:",
   
   "postman_team_name": "YOUR_TEAM_NAME",
-  "_postman_team_name_help": "Your Postman team name (e.g., 'acme-corp'). Find this in your Postman team URL: https://app.postman.com/team/YOUR_TEAM_NAME",
+  "_postman_team_name_help": "Your Postman team name. Find this in your Postman URL: https://app.postman.com/team/YOUR_TEAM_NAME",
   
-  "_azure_configuration": "Azure AD Identity Provider Configuration:",
+  "_idp_configuration": "Identity Provider Configuration (unified schema):",
   "idp_config": {
-    "idp_type": "azure",
-    "_idp_type_help": "Set to 'azure' for Azure AD SAML integration",
+    "idp_type": "YOUR_IDP_TYPE",
+    "_idp_type_help": "Supported types: 'okta', 'azure', 'ping', 'generic'",
     
-    "postman_integration_id": "YOUR_AZURE_OBJECT_ID",
-    "_postman_integration_id_help": "[REQUIRED] The Object ID from Azure AD. Find this in Azure Portal > Enterprise Applications > Postman > Properties > Object ID. This ID appears in all SAML URLs after /sso/adfs/. Format: 32-character hex string like 'dfdb9eec3ff9412e851e17d751184e17'",
+    "integration_id": "YOUR_INTEGRATION_ID",
+    "_integration_id_help": "[REQUIRED] The ID that appears in Postman's SAML URLs. For Okta: /sso/okta/{ID}/init, For Azure: /sso/adfs/{ID}/init, For Ping: /sso/ping/{ID}/init",
     
-    "tenant_id": "YOUR_AZURE_TENANT_ID",
-    "_tenant_id_help": "[REQUIRED] Azure AD Tenant ID (Directory ID). Find in Azure Portal > Azure Active Directory > Overview > Tenant ID. Format: 12345678-1234-1234-1234-123456789012",
+    "tenant_id": "YOUR_TENANT_ID",
+    "_tenant_id_help": "[OPTIONAL] IdP tenant/directory ID. For Azure: Your Azure AD tenant ID. For other IdPs: Usually not needed",
     
-    "app_id": "YOUR_AZURE_APP_ID",
-    "_app_id_help": "[OPTIONAL] Azure AD Application (Client) ID. Find in Azure Portal > Enterprise Applications > YOUR_POSTMAN_APP > Properties > Application ID",
-    
-    "idp_url": "https://login.microsoftonline.com/YOUR_AZURE_TENANT_ID/saml2",
-    "_idp_url_help": "[OPTIONAL] Azure AD SAML endpoint. Replace YOUR_AZURE_TENANT_ID with your actual tenant ID"
+    "idp_url": "YOUR_IDP_URL",
+    "_idp_url_help": "[OPTIONAL] Full SAML SSO URL. Only needed if auto-generated URLs don't work"
   },
   
-  "_ssl_configuration": "SSL Certificate Configuration - daemon requires valid certificates:",
+  "_ssl_configuration": "SSL Certificate Configuration:",
   "ssl_cert": "ssl/cert.pem",
   "_ssl_cert_help": "Path to SSL certificate. Enterprise deployments should use certificates from your internal CA",
   
@@ -36,78 +33,63 @@
   "listen_port": 443,
   "_listen_port_help": "HTTPS daemon port (default: 443). Requires admin privileges",
   
-  "_advanced_settings": "Advanced Configuration - defaults should work for most Azure AD deployments:",
+  "_advanced_settings": "Advanced Configuration (optional):",
   "advanced": {
     "timeout_seconds": 30,
-    "_timeout_seconds_help": "Authentication session timeout in seconds",
-    
     "oauth_timeout_seconds": 30,
-    "_oauth_timeout_seconds_help": "OAuth flow timeout. Azure AD flows typically complete in 5-10 seconds",
-    
     "dns_server": "8.8.8.8",
-    "_dns_server_help": "DNS server for resolving Postman IPs. Use your internal DNS if 8.8.8.8 is blocked",
-    
     "dns_fallback_ips": {
       "identity.getpostman.com": "104.18.36.161",
       "identity.postman.co": "104.18.37.186"
     },
-    "_dns_fallback_ips_help": "Fallback IPs if DNS fails. Update if Postman changes infrastructure",
-    
     "log_file": "/var/log/postman-auth.log",
-    "_log_file_help": "Log location. Windows: C:\\ProgramData\\PostmanAuth\\logs\\postman-auth.log",
-    
     "log_max_size_mb": 10,
-    "_log_max_size_mb_help": "Max log size before rotation (MB)",
-    
-    "log_backup_count": 5,
-    "_log_backup_count_help": "Number of rotated logs to keep",
-    
-    "allow_insecure_upstream": false,
-    "_allow_insecure_upstream_help": "WARNING: Only enable for debugging. Disables SSL verification to upstream",
-    
-    "postman_hostname": "identity.getpostman.com",
-    "_postman_hostname_help": "Primary Postman identity hostname"
+    "log_backup_count": 5
   },
   
-  "_azure_ad_setup_guide": [
-    "1. In Azure Portal, go to Enterprise Applications",
-    "2. Add 'Postman' from the gallery (or create custom SAML app)",
-    "3. Configure Single Sign-On with SAML",
-    "4. Set Identifier (Entity ID): https://identity.getpostman.com/sso/saml/{OBJECT_ID}",
-    "5. Set Reply URL: https://identity.getpostman.com/sso/adfs/{OBJECT_ID}/callback",
-    "6. Set Sign on URL: https://identity.getpostman.com/sso/adfs/{OBJECT_ID}/init",
-    "7. Note: The Object ID from Properties tab will be used in these URLs",
-    "8. Configure user attributes and claims as needed",
-    "9. Copy the Object ID and Tenant ID to this config",
-    "10. Test SAML configuration in Azure before deploying daemon"
-  ],
-  
-  "_example_azure_config": {
-    "postman_team_name": "contoso-engineering",
-    "idp_config": {
-      "idp_type": "azure",
-      "postman_integration_id": "dfdb9eec3ff9412e851e17d751184e17",
-      "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-      "app_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "idp_url": "https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/saml2"
+  "_examples": {
+    "okta": {
+      "_comment": "Okta configuration example",
+      "postman_team_name": "acme-corp",
+      "idp_config": {
+        "idp_type": "okta",
+        "integration_id": "db1b1a3764f24213906d682e26fd366f"
+      }
+    },
+    "azure": {
+      "_comment": "Azure AD configuration example",
+      "postman_team_name": "contoso",
+      "idp_config": {
+        "idp_type": "azure",
+        "integration_id": "a96eb820-ee73-4b66-9680-436e67bfa4be",
+        "tenant_id": "99259ead-cf03-4a9b-8ee3-89fa79597b70"
+      }
+    },
+    "ping": {
+      "_comment": "PingIdentity configuration example",
+      "postman_team_name": "enterprise",
+      "idp_config": {
+        "idp_type": "ping",
+        "integration_id": "YOUR_CONNECTION_ID"
+      }
     }
   },
   
-  "_security_notes": [
-    "SECURITY: Never commit real Azure AD credentials to version control",
-    "SECURITY: Use certificates from your enterprise CA in production", 
-    "SECURITY: Enable Azure AD Conditional Access policies for additional security",
-    "SECURITY: Monitor Azure AD sign-in logs alongside daemon logs",
-    "COMPLIANCE: All authentication attempts are logged for audit purposes"
-  ],
-  
-  "_troubleshooting_azure": [
-    "ISSUE: AADSTS50011 error → Verify Reply URL in Azure matches exactly: https://identity.getpostman.com/sso/adfs/{YOUR_OBJECT_ID}/callback",
-    "ISSUE: AADSTS700016 error → Check Application ID (app_id) is correct",
-    "ISSUE: AADSTS50105 error → User not assigned to application in Azure AD",
-    "ISSUE: Certificate errors → Ensure daemon certificate is trusted on client machines",
-    "ISSUE: Infinite redirect loop → Clear browser cookies and restart daemon",
-    "DEBUG: Test Azure SAML → Use Azure AD's 'Test this application' feature first",
-    "DEBUG: Check Azure logs → Azure Portal > Azure AD > Sign-in logs for authentication attempts"
-  ]
+  "_finding_integration_id": {
+    "okta": [
+      "1. In Okta Admin, go to Applications > YOUR_POSTMAN_APP",
+      "2. Look at the SAML configuration or SSO URL",
+      "3. Find the ID that Postman uses (often a long hex string)"
+    ],
+    "azure": [
+      "1. In Azure Portal, go to Enterprise Applications > Postman",
+      "2. Go to Properties tab",
+      "3. Copy the 'Object ID' (NOT the Application ID)",
+      "4. Format: a96eb820-ee73-4b66-9680-436e67bfa4be"
+    ],
+    "ping": [
+      "1. In PingIdentity, find your Postman SAML connection",
+      "2. Copy the Connection ID"
+    ]
+  }
 }

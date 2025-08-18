@@ -20,6 +20,46 @@ FALLBACK_LOG_FILE="$HOME/.postman-auth.log"
 START_MARKER="# BEGIN POSTMAN-AUTH-ROUTER"
 END_MARKER="# END POSTMAN-AUTH-ROUTER"
 
+# Helper function to add hosts entries
+add_hosts_entries() {
+    if ! grep -q "$START_MARKER" /etc/hosts; then
+        echo -e "${YELLOW}Adding hosts entries...${NC}"
+        
+        # Backup hosts file
+        cp /etc/hosts /etc/hosts.backup.$(date +%Y%m%d_%H%M%S)
+        
+        # Add marked section
+        cat >> /etc/hosts << EOF
+
+$START_MARKER
+# Postman SAML Enforcement - Redirects authentication to localhost
+127.0.0.1 identity.getpostman.com
+127.0.0.1 identity.postman.co
+127.0.0.1 id.gw.postman.com
+$END_MARKER
+EOF
+        echo -e "${GREEN}✓ Hosts entries added${NC}"
+    else
+        echo -e "${GREEN}✓ Hosts entries already present${NC}"
+    fi
+}
+
+# Helper function to remove hosts entries
+remove_hosts_entries() {
+    if grep -q "$START_MARKER" /etc/hosts; then
+        echo -e "${YELLOW}Removing hosts entries...${NC}"
+        
+        # Create backup
+        cp /etc/hosts /etc/hosts.backup.$(date +%Y%m%d_%H%M%S)
+        
+        # Remove marked section
+        sed -i.bak "/$START_MARKER/,/$END_MARKER/d" /etc/hosts
+        echo -e "${GREEN}✓ Hosts entries removed${NC}"
+    else
+        echo -e "${YELLOW}⚠ No hosts entries to remove${NC}"
+    fi
+}
+
 # Check dependencies
 check_dependencies() {
     local missing=0
@@ -61,6 +101,9 @@ case "$1" in
     start)
         echo -e "${GREEN}Starting Postman Auth Daemon...${NC}"
         
+        # Add hosts entries before starting daemon
+        add_hosts_entries
+        
         # Kill any existing daemon
         echo "Checking for existing daemon processes..."
         if pgrep -f "python.*saml_enforcer" > /dev/null; then
@@ -86,6 +129,8 @@ case "$1" in
             echo "Test with: curl -k https://identity.getpostman.com/health"
         else
             echo -e "${RED}✗ Failed to start daemon${NC}"
+            # Clean up hosts entries if daemon failed to start
+            remove_hosts_entries
             exit 1
         fi
         ;;
@@ -94,6 +139,9 @@ case "$1" in
         echo -e "${YELLOW}Stopping Postman Auth Daemon...${NC}"
         pkill -9 -f "python.*saml_enforcer" || true
         echo -e "${GREEN}✓ Daemon stopped${NC}"
+        
+        # Remove hosts entries after stopping daemon
+        remove_hosts_entries
         ;;
         
     restart)
@@ -243,26 +291,8 @@ case "$1" in
         fi
         echo ""
         
-        # 1. Setup hosts file with markers
-        echo "Configuring hosts file..."
-        if ! grep -q "$START_MARKER" /etc/hosts; then
-            echo -e "${YELLOW}Adding hosts entries...${NC}"
-            
-            # Backup hosts file
-            cp /etc/hosts /etc/hosts.backup.$(date +%Y%m%d_%H%M%S)
-            
-            # Add marked section
-            cat >> /etc/hosts << EOF
-
-$START_MARKER
-127.0.0.1 identity.getpostman.com
-127.0.0.1 identity.postman.co
-$END_MARKER
-EOF
-            echo -e "  ${GREEN}✓${NC} Hosts entries added (backup created)"
-        else
-            echo -e "  ${GREEN}✓${NC} Hosts entries already configured"
-        fi
+        # 1. Setup hosts file using helper function
+        add_hosts_entries
         
         # 2. Handle certificates
         echo ""
@@ -429,29 +459,11 @@ EOF
         echo "This will remove all traces of the Postman Auth Router"
         echo ""
         
-        # Markers for safe hosts file management
-        START_MARKER="# BEGIN POSTMAN-AUTH-ROUTER"
-        END_MARKER="# END POSTMAN-AUTH-ROUTER"
-        
-        # 1. Stop daemon
-        echo "Stopping daemon..."
+        # 1. Stop daemon (which will also remove hosts entries)
+        echo "Stopping daemon and removing hosts entries..."
         $0 stop
         
-        # 2. Remove hosts entries (using markers for safety)
-        echo ""
-        echo "Removing hosts entries..."
-        if grep -q "$START_MARKER" /etc/hosts; then
-            # Create backup
-            cp /etc/hosts /etc/hosts.backup.$(date +%Y%m%d_%H%M%S)
-            
-            # Remove marked section
-            sed -i.bak "/$START_MARKER/,/$END_MARKER/d" /etc/hosts
-            echo -e "  ${GREEN}✓${NC} Hosts entries removed"
-        else
-            echo -e "  ${YELLOW}⚠${NC} No marked hosts entries found"
-        fi
-        
-        # 3. Remove certificate from keychain
+        # 2. Remove certificate from keychain
         echo ""
         echo "Removing certificate from keychain..."
         if security find-certificate -c "identity.getpostman.com" /Library/Keychains/System.keychain 2>/dev/null | grep -q "identity.getpostman.com"; then
