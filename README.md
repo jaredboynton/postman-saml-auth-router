@@ -265,8 +265,7 @@ postman_redirect_daemon/
 
 ### Additional Resources
 - [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis as an FYI
-- [Alternative Implementations](docs/ALTERNATIVE_IMPLEMENTATIONS.md) - Network-level and proxy integration options
-
+  
 ## Troubleshooting
 
 For deployment assistance or questions:
