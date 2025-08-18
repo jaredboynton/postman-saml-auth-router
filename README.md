@@ -163,8 +163,7 @@ postman_redirect_daemon/
 │   ├── clear_win_sessions.ps1      # Windows session clearing
 │   ├── deploy_jamf.sh              # JAMF deployment helper
 │   ├── deploy_intune.ps1           # Intune deployment template
-│   ├── deploy_sccm.ps1             # SCCM deployment template
-│   └── validate_config.py          # Configuration validator
+│   └── deploy_sccm.ps1             # SCCM deployment template
 │
 └── docs/                           # Documentation
     ├── SECURITY.md                 # Security model & controls
