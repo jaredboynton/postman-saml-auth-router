@@ -4,11 +4,11 @@
 
 A local authentication proxy that forces all Postman sign-ins through your corporate SSO provider, preventing shadow IT and ensuring compliance across your entire fleet.
 
+ **The Goal:** Prevent data exfiltration by ensuring users can only access your designated enterprise Postman team. Without this enforcement, users can sign into personal or other organizational accounts and potentially leak sensitive API collections, environment variables, and documentation. SAML enforcement is the only way to guarantee users authenticate exclusively through your enterprise identity provider.
+
 ## Essential Reading
 
-**[Why This Solution Is Necessary - Technical Assessment](docs/ANALYSIS_OF_ALTERNATIVES.md)** - Before implementing, understand why enterprise security tools (CrowdStrike, Zscaler, F5) cannot achieve SAML enforcement for Postman. This comprehensive technical assessment explains the architectural requirements and why a local daemon is the only viable approach.
-
-**Critical Security Context**: The goal is to prevent data exfiltration by ensuring users can only access your designated enterprise Postman team. Without this enforcement, users can sign into personal or other organizational accounts and potentially leak sensitive API collections, environment variables, and documentation. SAML enforcement is the only way to guarantee users authenticate exclusively through your enterprise identity provider.
+**[Why This Solution Is Necessary - Technical Assessment](docs/ANALYSIS_OF_ALTERNATIVES.md)** - Before implementing, please take a look at the analysis that explains why enterprise security tools (CrowdStrike, Zscaler, F5) cannot achieve SAML enforcement for Postman. 
 
 ## What This Does & How It Works
 
