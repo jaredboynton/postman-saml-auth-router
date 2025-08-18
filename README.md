@@ -129,6 +129,30 @@ sudo ./scripts/daemon_manager.sh cleanup
 
 See [Security Documentation](docs/SECURITY.md) for complete details.
 
+## Why This Is The Only Viable Solution
+
+Organizations often ask: "Can we implement this with our existing security tools like CrowdStrike, Zscaler, or F5 instead?"
+
+**Short Answer**: No. We analyzed every alternative approach extensively.
+
+**Why Alternatives Fail**: Postman's OAuth authentication flow requires sophisticated session state management that enterprise security platforms cannot provide:
+
+- **OAuth Continuation Protection**: The daemon's 4-state machine never intercepts during OAuth `/continue` requests. All alternatives would break this, causing 401 authentication errors.
+- **Desktop Flow Detection**: Complex two-step validation prevents replay attacks. Alternatives cannot track session state across requests.
+- **Application-Specific Logic**: 4 layers of bypass prevention knowing exact Postman parameters (`intent=switch-account`, etc.). Alternatives can be trivially bypassed.
+- **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
+
+**What Alternatives Can Do**:
+- ✅ **Detection & Alerting**: Monitor Postman usage
+- ✅ **Complete Blocking**: Prevent all Postman access 
+- ❌ **SAML Enforcement**: Cannot redirect while preserving OAuth
+
+**The Technical Reality**: Infrastructure tools are the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management.
+
+**Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
+
+**Bottom Line**: Organizations wanting "SAML enforcement while maintaining Postman functionality" have exactly one viable option: this local daemon approach.
+
 ## Requirements
 
 - **OS**: macOS 10.15+, Windows 10+, Ubuntu 20.04+
@@ -175,7 +199,7 @@ postman_redirect_daemon/
 │   ├── DEPLOYMENT.md               # Enterprise deployment guide
 │   ├── CONFIGURATION.md            # Configuration reference
 │   ├── TROUBLESHOOTING.md          # Troubleshooting guide
-│   ├── ALTERNATIVE_IMPLEMENTATIONS.md # Network & proxy alternatives
+│   ├── ALTERNATIVE_ANALYSIS.md      # Why alternatives cannot work
 │   ├── TECHNICAL.md                # Implementation details
 │   ├── AUTHENTICATION_FLOW.md      # Flow analysis
 │   ├── MACOS_DEPLOYMENT.md         # macOS-specific guide
