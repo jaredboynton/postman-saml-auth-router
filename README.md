@@ -4,9 +4,17 @@
 
 A local authentication proxy that forces all Postman sign-ins through your corporate SSO provider, preventing shadow IT and ensuring compliance across your entire fleet.
 
-## What This Does
+## What This Does & How It Works
 
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
+
+```
+User → postman.co → State Machine Proxy (port 443) → Your SAML IdP
+                         ↑
+                    (via /etc/hosts)
+```
+
+The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
 
 **Key Benefits:**
 - **100% SAML enforcement** - No bypass possible
@@ -15,9 +23,43 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 - **No dependencies** - Pure Python standard library
 - **99% data exfiltration prevention** when combined with Domain Capture and Device Trust. While this won't stop a copy-paster or an intentionally malicious actor, this should stop everything else.
 
-## Local Testing (Before MDM Deployment)
+## Security Highlights
 
-**Note**: These steps are for local testing and validation only. Production deployment uses MDM tools (JAMF, Intune, SCCM) which handle installation, configuration, and certificate management automatically. See [Deployment Guide](docs/DEPLOYMENT.md) for enterprise deployment.
+- **Bypass Prevention**: Detects and blocks all known bypass techniques
+- **Session Control**: Instant session termination for offboarding and fine-tuning session length via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed via MDM
+- **Audit Logging**: SIEM-ready structured logs
+- **Certificate Security**: Enterprise CA support with MDM deployment
+- **Process Protection**: Cannot be killed even with admin privileges when deployed via MDM
+
+See [Security Documentation](docs/SECURITY.md) for complete details.
+
+## Why This Is The Only Viable Solution
+
+Organizations often ask: "Can we implement this with our existing security tools like CrowdStrike, Zscaler, or F5 instead?"
+
+**Short Answer**: No. I analyzed every alternative approach extensively.
+
+**Why Alternatives Fail**: OAuth authentication flows inherently require sophisticated session state management that enterprise security platforms fundamentally cannot provide:
+
+- **OAuth Continuation Protection**: The daemon's 4-state machine is necessary to prevent dropping state tracking throughout the flow. All alternatives would break this, causing 401 authentication errors.
+- **Desktop Flow Detection**: Complex two-step validation prevents replay attacks. Alternatives cannot track session state across requests.
+- **Application-Specific Logic**: 4 layers of bypass prevention understanding application-specific parameters. Alternatives can be trivially bypassed.
+- **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
+
+**What Alternatives Can Do**:
+- ✅ **Detection & Alerting**: Monitor Postman usage
+- ✅ **Complete Blocking**: Prevent all Postman access 
+- ❌ **SAML Enforcement**: Cannot redirect while preserving OAuth
+
+**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
+
+**Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
+
+**Bottom Line**: Organizations wanting "SAML enforcement while maintaining OAuth application functionality" have exactly one viable option: application-aware proxy solutions like this local daemon approach.
+
+## Local Testing & Management Commands
+
+**Note**: These steps are for local testing and validation only. Production deployment uses MDM tools (JAMF, Intune, SCCM) which handle installation, configuration, and certificate management automatically. Management commands also work in MDM deployments for troubleshooting and status monitoring.
 
 ### macOS/Linux
 ```bash
@@ -45,66 +87,7 @@ notepad config\config.json
 Start-Process https://postman.co
 ```
 
-## How It Works
-
-```
-User → postman.co → Local Proxy (port 443) → Your SAML IdP
-                         ↑
-                    (via /etc/hosts)
-```
-
-The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
-
-## Documentation
-
-### Planning & Evaluation
-- [Security Model & Threat Analysis](docs/SECURITY.md) - Comprehensive security documentation
-- [Architecture Overview](docs/ARCHITECTURE.md) - Technical design and components
-- [Why Local Enforcement](docs/adr/local-enforcement.md) - Architectural decision rationale
-
-### Implementation
-- [Deployment Guide](docs/DEPLOYMENT.md) - MDM deployment for JAMF, Intune, SCCM
-- [Configuration Reference](docs/CONFIGURATION.md) - All configuration options
-- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
-
-### Additional Resources
-- [Windows Deployment](docs/WINDOWS_DEPLOYMENT.md) - Windows-specific guidance
-- [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - macOS-specific guidance
-- [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis
-- [Alternative Implementations](docs/ALTERNATIVE_IMPLEMENTATIONS.md) - Network-level and proxy integration options
-
-## Enterprise Deployment
-
-**Supported MDM Platforms:**
-- JAMF (macOS)
-- Microsoft Intune (Windows)
-- SCCM (Windows)  
-- Workspace ONE (Cross-platform)
-
-**Supported Identity Providers:**
-- Okta
-- Azure AD
-- Ping Identity
-- Any SAML 2.0 provider
-
-**Scale:** Deploy identically to 10 or 10,000 devices via MDM.
-
-## Configuration Example
-
-```json
-{
-  "postman_team_name": "your-team",
-  "idp_config": {
-    "idp_type": "okta",
-    "okta_tenant_id": "dev-12345678"
-  }
-}
-```
-
-See [Configuration Guide](docs/CONFIGURATION.md) for all options.
-
-## Management Commands
-
+### Management Commands
 ```bash
 # Check status
 sudo ./scripts/daemon_manager.sh status
@@ -119,46 +102,37 @@ sudo ./scripts/daemon_manager.sh restart
 sudo ./scripts/daemon_manager.sh cleanup
 ```
 
-## Security Highlights
+## Enterprise Deployment
 
-- **Bypass Prevention**: Detects and blocks all known bypass techniques
-- **Session Control**: Instant session termination for offboarding and fine-tuning session length via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed via MDM
-- **Audit Logging**: SIEM-ready structured logs
-- **Certificate Security**: Enterprise CA support with MDM deployment
-- **Process Protection**: Cannot be killed even with admin privileges when deployed via MDM
+**Supported MDM Platforms:**
+- JAMF (macOS)
+- Microsoft Intune (Windows)
+- SCCM (Windows)
+- Workspace ONE (Cross-platform)
 
-See [Security Documentation](docs/SECURITY.md) for complete details.
+**Supported Identity Providers:**
+- Okta
+- Azure AD
+- Ping Identity
+- Any SAML 2.0 provider
 
-## Why This Is The Only Viable Solution
+**Scale:** Deploy identically to 10 or 10,000 devices via MDM.
 
-Organizations often ask: "Can we implement this with our existing security tools like CrowdStrike, Zscaler, or F5 instead?"
+See platform-specific deployment guides: [macOS](docs/MACOS_DEPLOYMENT.md) and [Windows](docs/WINDOWS_DEPLOYMENT.md) for complete enterprise deployment instructions.
 
-**Short Answer**: No. I analyzed every alternative approach extensively.
+## Configuration Example
 
-**Why Alternatives Fail**: OAuth authentication flows inherently require sophisticated session state management that enterprise security platforms fundamentally cannot provide:
+```json
+{
+  "postman_team_name": "your-team",
+  "idp_config": {
+    "idp_type": "okta",
+    "okta_tenant_id": "dev-12345678"
+  }
+}
+```
 
-- **OAuth Continuation Protection**: The daemon's 4-state machine never intercepts during OAuth `/continue` requests. All alternatives would break this, causing 401 authentication errors.
-- **Desktop Flow Detection**: Complex two-step validation prevents replay attacks. Alternatives cannot track session state across requests.
-- **Application-Specific Logic**: 4 layers of bypass prevention understanding application-specific parameters. Alternatives can be trivially bypassed.
-- **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
-
-**What Alternatives Can Do**:
-- ✅ **Detection & Alerting**: Monitor Postman usage
-- ✅ **Complete Blocking**: Prevent all Postman access 
-- ❌ **SAML Enforcement**: Cannot redirect while preserving OAuth
-
-**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer for application-specific authentication logic. Even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
-
-**Comprehensive Analysis**: See [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
-
-**Bottom Line**: Organizations wanting "SAML enforcement while maintaining OAuth application functionality" have exactly one viable option: application-aware proxy solutions like this local daemon approach.
-
-## Requirements
-
-- **OS**: macOS 10.15+, Windows 10+, Ubuntu 20.04+
-- **Python**: 3.8 or higher
-- **Privileges**: Root/Administrator access
-- **Enterprise**: SAML-configured Postman team
+See [Configuration Guide](docs/CONFIGURATION.md) for all options.
 
 ## Project Structure
 
@@ -177,7 +151,7 @@ postman_redirect_daemon/
 │
 ├── config/                         # Configuration files
 │   ├── config.json.template        # Configuration template
-│   └── config.json                 # Your configuration (git-ignored)
+│   └── config.json                 # Your configuration (gitignored)
 │
 ├── ssl/                            # SSL certificates
 │   ├── cert.conf                   # Certificate configuration
@@ -192,36 +166,44 @@ postman_redirect_daemon/
 │   ├── deploy_sccm.ps1             # SCCM deployment template
 │   └── validate_config.py          # Configuration validator
 │
-├── docs/                           # Documentation
-│   ├── SECURITY.md                 # Security model & controls
-│   ├── ARCHITECTURE.md             # Technical architecture
-│   ├── DEPLOYMENT.md               # Enterprise deployment guide
-│   ├── CONFIGURATION.md            # Configuration reference
-│   ├── TROUBLESHOOTING.md          # Troubleshooting guide
-│   ├── ALTERNATIVE_ANALYSIS.md      # Why alternatives cannot work
-│   ├── TECHNICAL.md                # Implementation details
-│   ├── AUTHENTICATION_FLOW.md      # Flow analysis
-│   ├── MACOS_DEPLOYMENT.md         # macOS-specific guide
-│   ├── WINDOWS_DEPLOYMENT.md       # Windows-specific guide
-│   └── adr/                        # Architecture Decision Records
-│       └── local-enforcement.md    # Why local vs network proxy
-│
-└── logs/                           # Log files (created at runtime)
-    └── postman-auth.log            # Daemon logs
+└── docs/                           # Documentation
+    ├── SECURITY.md                 # Security model & controls
+    ├── ARCHITECTURE.md             # Technical architecture
+    ├── CONFIGURATION.md            # Configuration reference
+    ├── TROUBLESHOOTING.md          # Troubleshooting guide
+    ├── ALTERNATIVE_ANALYSIS.md     # Why alternatives cannot work
+    ├── TECHNICAL.md                # Implementation details
+    ├── AUTHENTICATION_FLOW.md      # Flow analysis, useful for troubleshooting
+    ├── MACOS_DEPLOYMENT.md         # macOS deployment guide
+    └── WINDOWS_DEPLOYMENT.md       # Windows deployment guide
+
+**Runtime Log Locations:**
+- macOS/Linux: `/var/log/postman-auth.log`
+- Windows: `C:\ProgramData\Postman\logs\postman-auth.log`
 ```
 
-## Industry Validation
+## Documentation
 
-This local enforcement pattern is the industry standard, used by:
-- **CrowdStrike Falcon** - DNS security via hosts modification
-- **Microsoft Defender** - Local proxy for web protection
-- **Zscaler** - Local agent for cloud security
+### Planning & Evaluation
+- [Security Model & Threat Analysis](docs/SECURITY.md) - Comprehensive security documentation
+- [Architecture Overview](docs/ARCHITECTURE.md) - Technical design and components
+- [Alternative Analysis](docs/ALTERNATIVE_ANALYSIS.md) - Why alternatives cannot work
 
-## Support
+### Implementation
+- [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - JAMF, Apple Business Manager, Munki deployment
+- [Windows Deployment](docs/WINDOWS_DEPLOYMENT.md) - Intune, SCCM, Group Policy deployment
+- [Configuration Reference](docs/CONFIGURATION.md) - All configuration options
+- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
+
+### Additional Resources
+- [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis as an FYI
+- [Alternative Implementations](docs/ALTERNATIVE_IMPLEMENTATIONS.md) - Network-level and proxy integration options
+
+## Troubleshooting
 
 For deployment assistance or questions:
 1. Check [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
-2. Review [deployment logs](docs/DEPLOYMENT.md#validation-checklist)
+2. Review platform-specific deployment guides: [macOS](docs/MACOS_DEPLOYMENT.md) or [Windows](docs/WINDOWS_DEPLOYMENT.md)
 3. Contact your IT security team
 
 ---
