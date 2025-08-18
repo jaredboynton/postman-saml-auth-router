@@ -9,13 +9,15 @@ A local authentication proxy that forces all Postman sign-ins through your corpo
 When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
 
 **Key Benefits:**
-- ✅ **100% SAML enforcement** - No bypass possible
-- ✅ **Works everywhere** - Office, home, VPN, coffee shop
-- ✅ **5-minute deployment** - Via MDM, no network changes
-- ✅ **Zero dependencies** - Pure Python standard library
-- ✅ **99% data exfiltration prevention** - When combined with Domain Capture
+- **100% SAML enforcement** - No bypass possible
+- **Works everywhere** - Office, home, VPN, coffee shop
+- **Quick deployment** - Via MDM, no network changes
+- **No dependencies** - Pure Python standard library
+- **99% data exfiltration prevention** when combined with Domain Capture and Device Trust. While this won't stop a copy-paster or an intentionally malicious actor, this should stop everything else.
 
-## Quick Start (3 Steps)
+## Local Testing (Before MDM Deployment)
+
+**Note**: These steps are for local testing and validation only. Production deployment uses MDM tools (JAMF, Intune, SCCM) which handle installation, configuration, and certificate management automatically. See [Deployment Guide](docs/DEPLOYMENT.md) for enterprise deployment.
 
 ### macOS/Linux
 ```bash
@@ -23,7 +25,7 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 cp config/config.json.template config/config.json
 vi config/config.json  # Add team name & IdP details
 
-# 2. Run setup
+# 2. Run setup (local testing only)
 sudo ./scripts/daemon_manager.sh setup
 
 # 3. Test authentication
@@ -36,7 +38,7 @@ open https://postman.co  # Should redirect to your IdP
 Copy-Item config\config.json.template config\config.json
 notepad config\config.json
 
-# 2. Run setup
+# 2. Run setup (local testing only)
 .\scripts\daemon_manager.ps1 setup
 
 # 3. Test authentication
@@ -55,17 +57,17 @@ The daemon intercepts authentication requests and enforces SAML-only access thro
 
 ## Documentation
 
-### 📋 Planning & Evaluation
+### Planning & Evaluation
 - [Security Model & Threat Analysis](docs/SECURITY.md) - Comprehensive security documentation
 - [Architecture Overview](docs/ARCHITECTURE.md) - Technical design and components
 - [Why Local Enforcement](docs/adr/local-enforcement.md) - Architectural decision rationale
 
-### 🚀 Implementation
+### Implementation
 - [Deployment Guide](docs/DEPLOYMENT.md) - MDM deployment for JAMF, Intune, SCCM
 - [Configuration Reference](docs/CONFIGURATION.md) - All configuration options
 - [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
-### 📚 Additional Resources
+### Additional Resources
 - [Windows Deployment](docs/WINDOWS_DEPLOYMENT.md) - Windows-specific guidance
 - [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - macOS-specific guidance
 - [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis
@@ -119,7 +121,7 @@ sudo ./scripts/daemon_manager.sh cleanup
 ## Security Highlights
 
 - **Bypass Prevention**: Detects and blocks all known bypass techniques
-- **Session Control**: Instant termination capability for offboarding
+- **Session Control**: Instant termination capability for offboarding via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed through MDM
 - **Audit Logging**: SIEM-ready structured logs
 - **Certificate Security**: Enterprise CA support with MDM deployment
 - **Process Protection**: Cannot be killed even with admin privileges when deployed via MDM
