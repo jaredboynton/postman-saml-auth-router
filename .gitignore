@@ -52,3 +52,7 @@ dist/
 build/
 *.egg-info/
 
+# Internal documentation
+[A-Z]*.md
+*.notes
+*.tmp
