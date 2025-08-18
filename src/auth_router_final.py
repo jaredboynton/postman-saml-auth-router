@@ -33,14 +33,20 @@ import ssl
 import subprocess
 import sys
 import threading
-import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from enum import Enum
-from http.client import HTTPSConnection, HTTPConnection
-from pathlib import Path
+from http.client import HTTPSConnection
 from typing import Dict, Optional, Tuple, Any, List
+
+# Constants
+BUFFER_SIZE = 4096
+DEFAULT_TIMEOUT = 30
+OAUTH_TIMEOUT = 30
+HTTPS_PORT = 443
+HEALTH_PORT = 8443
+DEFAULT_DNS_SERVER = '8.8.8.8'
 
 # Configure logging
 def setup_logging(log_file=None, max_bytes=10485760, backup_count=5):
@@ -92,7 +98,7 @@ class DNSResolver:
     to proxy requests upstream. Uses nslookup with hardcoded fallbacks.
     """
     
-    def __init__(self, dns_server: str = '8.8.8.8', fallback_ips: Optional[Dict[str, str]] = None):
+    def __init__(self, dns_server: str = DEFAULT_DNS_SERVER, fallback_ips: Optional[Dict[str, str]] = None):
         self.cache: Dict[str, str] = {}
         self.dns_server = dns_server
         self.fallback_ips = fallback_ips or {}
@@ -149,8 +155,8 @@ class DNSResolver:
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             logger.debug(f"nslookup command failed for {hostname}: {e}")
             return None
-        except Exception as e:
-            logger.error(f"Unexpected error in nslookup for {hostname}: {e}")
+        except (OSError, ValueError) as e:
+            logger.error(f"System error in nslookup for {hostname}: {e}")
             return None
 
     def _is_valid_ip(self, ip: str) -> bool:
@@ -214,7 +220,7 @@ class AuthStateMachine:
         metrics: Performance and security metrics
     """
     
-    def __init__(self, timeout_seconds: int = 30, oauth_timeout_seconds: int = 30):
+    def __init__(self, timeout_seconds: int = DEFAULT_TIMEOUT, oauth_timeout_seconds: int = OAUTH_TIMEOUT):
         self.current_state = AuthState.IDLE
         self.session_data: Dict[str, Any] = {}
         self.state_entered_at = datetime.now()
@@ -249,69 +255,100 @@ class AuthStateMachine:
     def should_intercept(self, host: str, path: str) -> bool:
         """Determine if a request should be intercepted based on current state."""
         with self._lock:
-            # Check for timeout
+            # Check for timeout first
             if self._is_timed_out():
                 logger.warning("Session timed out, resetting to IDLE")
                 self.current_state = AuthState.IDLE
                 self.session_data = {}
             
-            # State-based interception rules
+            # Handle IDLE state
             if self.current_state == AuthState.IDLE:
-                # Start tracking when we see initial auth (Desktop or Browser flow)
-                if host == "identity.getpostman.com" and ("/client" in path or path.startswith("/login")):
-                    self.current_state = AuthState.AUTH_INIT
-                    self.state_entered_at = datetime.now()
-                    self.metrics['auth_attempts'] += 1
-                    
-                    # IMPORTANT: Desktop flows MUST start with /client/login
-                    # This flag prevents auth_challenge replay attacks
-                    if "/client" in path:
-                        self.session_data['desktop_flow_initiated'] = True
-                        logger.debug("Desktop flow initiated via /client/login")
-                    
-                    # For browser flows starting directly at /login, intercept immediately
-                    if path.startswith("/login") and "/client" not in path:
-                        return True  # Intercept browser login
-                    return False  # Pass through Desktop client requests
+                return self._handle_idle_state(host, path)
             
-            elif self.current_state == AuthState.AUTH_INIT:
-                # Intercept login page to force SAML
+            # Handle AUTH_INIT state
+            if self.current_state == AuthState.AUTH_INIT:
                 if host == "identity.getpostman.com" and path.startswith("/login"):
                     return True  # Intercept and redirect to SAML
+                return False
             
-            elif self.current_state == AuthState.SAML_FLOW:
-                # SAML is in progress - check for OAuth continuation on Postman domains
-                if ("/continue" in path and 
-                    host in ["identity.postman.co", "identity.postman.com"]):
+            # Handle SAML_FLOW state
+            if self.current_state == AuthState.SAML_FLOW:
+                if "/continue" in path and host in ["identity.postman.co", "identity.postman.com"]:
                     self.current_state = AuthState.OAUTH_CONTINUATION
                     self.state_entered_at = datetime.now()
-                    return False  # CRITICAL: Don't intercept OAuth continuation
+                return False  # Never intercept during SAML flow
             
-            elif self.current_state == AuthState.OAUTH_CONTINUATION:
-                # OAuth continuation in progress - track but don't intercept!
-                
-                # Check for OAuth-specific timeout
-                if (datetime.now() - self.state_entered_at).seconds > self.oauth_timeout_seconds:
-                    logger.info("OAuth continuation timeout (30s) - resetting to IDLE")
-                    self.current_state = AuthState.IDLE
-                    self.session_data = {}
-                    return False
-                
-                # Track id.gw.postman.com for state transition (but don't intercept)
-                if host == "id.gw.postman.com":
-                    logger.info(f"OAuth flow reached id.gw.postman.com{path} - tracking but not intercepting")
-                    return False
-                
-                # Check for successful completion - reset to IDLE immediately
-                if "/browser-auth/success" in path:
-                    self.current_state = AuthState.IDLE
-                    self.session_data = {}
-                    self.metrics['successful_auths'] += 1
-                    logger.info("Authentication completed successfully")
-                return False
+            # Handle OAUTH_CONTINUATION state
+            if self.current_state == AuthState.OAUTH_CONTINUATION:
+                return self._handle_oauth_state(host, path)
             
             # Default: don't intercept
             return False
+    
+    def _handle_idle_state(self, host: str, path: str) -> bool:
+        """Handle requests in IDLE state.
+        
+        Args:
+            host: Request host
+            path: Request path
+            
+        Returns:
+            True if request should be intercepted
+        """
+        # Only interested in identity.getpostman.com auth requests
+        if host != "identity.getpostman.com":
+            return False
+        
+        # Check for auth initialization
+        if not ("/client" in path or path.startswith("/login")):
+            return False
+        
+        # Initialize auth tracking
+        self.current_state = AuthState.AUTH_INIT
+        self.state_entered_at = datetime.now()
+        self.metrics['auth_attempts'] += 1
+        
+        # Desktop flow tracking
+        if "/client" in path:
+            self.session_data['desktop_flow_initiated'] = True
+            logger.debug("Desktop flow initiated via /client/login")
+            return False  # Pass through Desktop client requests
+        
+        # Browser flow - intercept immediately
+        if path.startswith("/login"):
+            return True
+        
+        return False
+    
+    def _handle_oauth_state(self, host: str, path: str) -> bool:
+        """Handle requests during OAuth continuation.
+        
+        Args:
+            host: Request host
+            path: Request path
+            
+        Returns:
+            False (never intercept during OAuth)
+        """
+        # Check OAuth timeout
+        if (datetime.now() - self.state_entered_at).seconds > self.oauth_timeout_seconds:
+            logger.info(f"OAuth continuation timeout ({self.oauth_timeout_seconds}s) - resetting to IDLE")
+            self.current_state = AuthState.IDLE
+            self.session_data = {}
+            return False
+        
+        # Track gateway access
+        if host == "id.gw.postman.com":
+            logger.info(f"OAuth flow reached id.gw.postman.com{path} - tracking but not intercepting")
+        
+        # Check for successful completion
+        if "/browser-auth/success" in path:
+            self.current_state = AuthState.IDLE
+            self.session_data = {}
+            self.metrics['successful_auths'] += 1
+            logger.info("Authentication completed successfully")
+        
+        return False  # Never intercept during OAuth
     
     def _is_timed_out(self) -> bool:
         """Check if current session has timed out.
@@ -529,7 +566,7 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
             
             return is_allowed
             
-        except Exception as e:
+        except (ValueError, AttributeError) as e:
             logger.error(f"Error validating continue URL: {e}")
             return False
     
@@ -691,116 +728,174 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         try:
             # For intercepted domains, use socket-level connection with SNI
             if upstream_ip != host:  # We resolved to an IP, need manual SNI handling
-                # Create raw socket to IP
-                import socket as sock
-                raw_socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-                raw_socket.settimeout(30)
-                raw_socket.connect((upstream_ip, 443))
-                
-                # Wrap with SSL, setting SNI to the original hostname
-                context = self._get_upstream_ssl_context()
-                
-                # CRITICAL: server_hostname sets SNI for Cloudflare routing
-                # Without this, Cloudflare returns 525 SSL handshake failed
-                ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
-                
-                # Build HTTP request manually
-                request_line = f"{method} {path} HTTP/1.1\r\n"
-                headers_str = f"Host: {host}\r\n"
-                
-                for key, value in self.headers.items():
-                    if key.lower() not in ['connection', 'accept-encoding']:
-                        headers_str += f"{key}: {value}\r\n"
-                
-                headers_str += "Connection: close\r\n\r\n"
-                
-                # Send request
-                ssl_socket.send((request_line + headers_str).encode())
-                if body:
-                    ssl_socket.send(body)
-                
-                # Read response
-                response_data = b""
-                while True:
-                    chunk = ssl_socket.recv(4096)
-                    if not chunk:
-                        break
-                    response_data += chunk
-                
-                ssl_socket.close()
-                raw_socket.close()
-                
-                # Parse response
-                if b'\r\n\r\n' in response_data:
-                    header_data, body_data = response_data.split(b'\r\n\r\n', 1)
-                else:
-                    header_data = response_data
-                    body_data = b""
-                
-                # Parse status line and headers
-                lines = header_data.decode('utf-8', errors='ignore').split('\r\n')
-                if lines:
-                    status_line = lines[0]
-                    # Parse status
-                    parts = status_line.split(' ', 2)
-                    if len(parts) >= 2:
-                        status_code = int(parts[1])
-                    else:
-                        status_code = 502
-                    
-                    # Send response to client
-                    self.send_response(status_code)
-                    
-                    # Parse and send headers
-                    for line in lines[1:]:
-                        if ':' in line:
-                            key, value = line.split(':', 1)
-                            if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding']:
-                                self.send_header(key, value.strip())
-                    
-                    self.end_headers()
-                    
-                    # Send body
-                    if body_data:
-                        self.wfile.write(body_data)
+                self._proxy_with_sni(host, upstream_ip, path, method, body)
             else:
-                # Normal connection (no special handling needed)
-                context = self._get_upstream_ssl_context()
-                conn = HTTPSConnection(host, context=context)
-                
-                # Prepare headers - remove encoding headers to prevent compression issues
-                headers = {}
-                for key, value in self.headers.items():
-                    if key.lower() not in ['connection', 'accept-encoding']:
-                        headers[key] = value
-                headers['Host'] = host
-                
-                # Make request
-                conn.request(method, path, body, headers)
-                response = conn.getresponse()
-                
-                # Read response
-                response_body = response.read()
-                
-                # Send response back to client
-                self.send_response(response.status)
-                
-                # Copy response headers (excluding connection headers)
-                for key, value in response.getheaders():
-                    if key.lower() not in ['connection', 'transfer-encoding']:
-                        self.send_header(key, value)
-                
-                self.end_headers()
-                
-                # Send response body
-                if response_body:
-                    self.wfile.write(response_body)
-                
-                conn.close()
+                self._proxy_direct(host, path, method, body)
         
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ssl.SSLError) as e:
             logger.error(f"Upstream proxy error: {e}")
             self.send_error(502, f"Bad Gateway: {str(e)}")
+    
+    def _proxy_with_sni(self, host: str, upstream_ip: str, path: str, method: str, body: bytes):
+        """Proxy with manual SNI handling for intercepted domains.
+        
+        Args:
+            host: Original hostname for SNI
+            upstream_ip: Resolved IP address
+            path: Request path
+            method: HTTP method
+            body: Request body
+        """
+        try:
+            # Create raw socket to IP
+            import socket as sock
+            raw_socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+            raw_socket.settimeout(DEFAULT_TIMEOUT)
+            raw_socket.connect((upstream_ip, 443))
+            
+            # Wrap with SSL, setting SNI to the original hostname
+            context = self._get_upstream_ssl_context()
+            
+            # CRITICAL: server_hostname sets SNI for Cloudflare routing
+            # Without this, Cloudflare returns 525 SSL handshake failed
+            ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
+            
+            # Build and send request
+            request_data = self._build_request(method, path, host, body)
+            ssl_socket.send(request_data)
+            
+            # Read response
+            response_data = b""
+            while True:
+                chunk = ssl_socket.recv(BUFFER_SIZE)
+                if not chunk:
+                    break
+                response_data += chunk
+            
+            ssl_socket.close()
+            raw_socket.close()
+            
+            # Parse and send response
+            self._send_parsed_response(response_data)
+            
+        except (socket.error, ssl.SSLError, ConnectionError) as e:
+            logger.error(f"SNI proxy error: {e}")
+            raise
+    
+    def _proxy_direct(self, host: str, path: str, method: str, body: bytes):
+        """Direct proxy connection without SNI handling.
+        
+        Args:
+            host: Hostname
+            path: Request path
+            method: HTTP method
+            body: Request body
+        """
+        try:
+            # Normal connection (no special handling needed)
+            context = self._get_upstream_ssl_context()
+            conn = HTTPSConnection(host, context=context)
+            
+            # Prepare headers - remove encoding headers to prevent compression issues
+            headers = {}
+            for key, value in self.headers.items():
+                if key.lower() not in ['connection', 'accept-encoding']:
+                    headers[key] = value
+            headers['Host'] = host
+            
+            # Make request
+            conn.request(method, path, body, headers)
+            response = conn.getresponse()
+            
+            # Read response
+            response_body = response.read()
+            
+            # Send response back to client
+            self.send_response(response.status)
+            
+            # Copy response headers (excluding connection headers)
+            for key, value in response.getheaders():
+                if key.lower() not in ['connection', 'transfer-encoding']:
+                    self.send_header(key, value)
+            
+            self.end_headers()
+            
+            # Send response body
+            if response_body:
+                self.wfile.write(response_body)
+            
+            conn.close()
+            
+        except (ConnectionError, TimeoutError, ssl.SSLError) as e:
+            logger.error(f"Direct proxy error: {e}")
+            raise
+    
+    def _build_request(self, method: str, path: str, host: str, body: bytes) -> bytes:
+        """Build HTTP request data.
+        
+        Args:
+            method: HTTP method
+            path: Request path
+            host: Host header value
+            body: Request body
+            
+        Returns:
+            Complete request as bytes
+        """
+        request_line = f"{method} {path} HTTP/1.1\r\n"
+        headers_str = f"Host: {host}\r\n"
+        
+        for key, value in self.headers.items():
+            if key.lower() not in ['connection', 'accept-encoding']:
+                headers_str += f"{key}: {value}\r\n"
+        
+        headers_str += "Connection: close\r\n\r\n"
+        
+        request_data = (request_line + headers_str).encode()
+        if body:
+            request_data += body
+        
+        return request_data
+    
+    def _send_parsed_response(self, response_data: bytes):
+        """Parse and send HTTP response to client.
+        
+        Args:
+            response_data: Raw response bytes
+        """
+        # Parse response
+        if b'\r\n\r\n' in response_data:
+            header_data, body_data = response_data.split(b'\r\n\r\n', 1)
+        else:
+            header_data = response_data
+            body_data = b""
+        
+        # Parse status line and headers
+        lines = header_data.decode('utf-8', errors='ignore').split('\r\n')
+        if lines:
+            status_line = lines[0]
+            # Parse status
+            parts = status_line.split(' ', 2)
+            if len(parts) >= 2:
+                status_code = int(parts[1])
+            else:
+                status_code = 502
+            
+            # Send response to client
+            self.send_response(status_code)
+            
+            # Parse and send headers
+            for line in lines[1:]:
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding']:
+                        self.send_header(key, value.strip())
+            
+            self.end_headers()
+            
+            # Send body
+            if body_data:
+                self.wfile.write(body_data)
     
     def _get_real_host(self, intercepted_host: str) -> str:
         """Get the real upstream host for an intercepted domain.
@@ -882,6 +977,10 @@ class PostmanAuthDaemon:
         ssl_context: SSL context for HTTPS server
     """
     
+    # Class attributes for signal handling
+    _instance = None
+    _hosts_manager = None
+    
     def __init__(self, config_path: str = "config/config.json"):
         """Initialize the daemon.
         
@@ -893,22 +992,9 @@ class PostmanAuthDaemon:
         # Get advanced settings with defaults
         advanced = self.config.get('advanced', {})
         
-        # Reconfigure logging with settings from config
-        log_file = advanced.get('log_file', '/var/log/postman-auth.log')
-        log_max_mb = advanced.get('log_max_size_mb', 10)
-        log_backups = advanced.get('log_backup_count', 5)
-        
-        # Reconfigure global logger with rotation settings
-        global logger
-        logger = setup_logging(
-            log_file=log_file,
-            max_bytes=log_max_mb * 1024 * 1024 if log_max_mb > 0 else 0,
-            backup_count=log_backups
-        )
-        
-        timeout = advanced.get('timeout_seconds', 30)
-        oauth_timeout = advanced.get('oauth_timeout_seconds', 30)
-        dns_server = advanced.get('dns_server', '8.8.8.8')
+        timeout = advanced.get('timeout_seconds', DEFAULT_TIMEOUT)
+        oauth_timeout = advanced.get('oauth_timeout_seconds', OAUTH_TIMEOUT)
+        dns_server = advanced.get('dns_server', DEFAULT_DNS_SERVER)
         fallback_ips = advanced.get('dns_fallback_ips', {})
         
         self.state_machine = AuthStateMachine(timeout, oauth_timeout)
@@ -916,6 +1002,9 @@ class PostmanAuthDaemon:
         self.ssl_context = self._setup_ssl_context()
         self.start_time = datetime.now()
         self.server = None
+        
+        # Set class instance for signal handler
+        PostmanAuthDaemon._instance = self
         
         # Validate configuration
         self._validate_config()
@@ -988,8 +1077,8 @@ class PostmanAuthDaemon:
         self.config.setdefault('postman_hostname', 'identity.getpostman.com')
         self.config.setdefault('ssl_cert', 'ssl/cert.pem')
         self.config.setdefault('ssl_key', 'ssl/key.pem')
-        self.config.setdefault('listen_port', 443)
-        self.config.setdefault('health_check_port', 8443)
+        self.config.setdefault('listen_port', HTTPS_PORT)
+        self.config.setdefault('health_check_port', HEALTH_PORT)
     
     def _setup_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context for HTTPS server.
@@ -1013,11 +1102,11 @@ class PostmanAuthDaemon:
     def start(self):
         """Start the daemon and begin listening for connections."""
         # Create HTTPS server
-        server_address = ('0.0.0.0', self.config.get('listen_port', 443))
+        server_address = ('0.0.0.0', self.config.get('listen_port', HTTPS_PORT))
         self.server = SSLHTTPServer(server_address, PostmanAuthHandler, self.ssl_context)
         
-        logger.info(f"Daemon started on port {self.config.get('listen_port', 443)}")
-        logger.info(f"Health endpoint available at https://localhost:{self.config.get('listen_port', 443)}/health")
+        logger.info(f"Daemon started on port {self.config.get('listen_port', HTTPS_PORT)}")
+        logger.info(f"Health endpoint available at https://localhost:{self.config.get('listen_port', HTTPS_PORT)}/health")
         
         try:
             # Run the server
@@ -1034,11 +1123,6 @@ class PostmanAuthDaemon:
         logger.info("Daemon shutdown complete")
 
 
-# Global reference for signal handler
-daemon = None
-hosts_manager = None  # Only populated if --dynamic-hosts flag is used
-
-
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully.
     
@@ -1049,19 +1133,18 @@ def signal_handler(signum, frame):
     logger.info(f"Received signal {signum}, shutting down...")
     
     # Clean up hosts entries if using dynamic management
-    if hosts_manager:
-        hosts_manager.cleanup_all()
+    if PostmanAuthDaemon._hosts_manager:
+        PostmanAuthDaemon._hosts_manager.cleanup_all()
     
     # Shutdown daemon
-    if daemon:
-        daemon.cleanup()
+    if PostmanAuthDaemon._instance:
+        PostmanAuthDaemon._instance.cleanup()
     
     sys.exit(0)
 
 
 def main():
     """Main entry point for the daemon."""
-    global daemon, hosts_manager
     
     # Check for root privileges
     if os.geteuid() != 0:
@@ -1069,7 +1152,7 @@ def main():
         print("⚠️  ROOT PRIVILEGES REQUIRED")
         print("="*60)
         print("\nThis daemon requires root access to:")
-        print("  • Bind to port 443 (HTTPS)")
+        print(f"  • Bind to port {HTTPS_PORT} (HTTPS)")
         print("  • Modify /etc/hosts (if using --dynamic-hosts)")
         print("  • Write to /var/log/postman-auth.log")
         print("\nPlease run with sudo:")
@@ -1094,10 +1177,10 @@ def main():
     if args.dynamic_hosts:
         # Import only when needed to keep main daemon lightweight
         from dynamic_hosts.hosts_manager import HostsManager
-        hosts_manager = HostsManager()
+        PostmanAuthDaemon._hosts_manager = HostsManager()
         # Set initial hosts entries
-        hosts_manager.add_entry('127.0.0.1', 'identity.getpostman.com')
-        hosts_manager.add_entry('127.0.0.1', 'identity.postman.co')
+        PostmanAuthDaemon._hosts_manager.add_entry('127.0.0.1', 'identity.getpostman.com')
+        PostmanAuthDaemon._hosts_manager.add_entry('127.0.0.1', 'identity.postman.co')
     
     try:
         # Create and start daemon
@@ -1106,15 +1189,17 @@ def main():
         
     except KeyboardInterrupt:
         logger.info("Daemon stopped by user")
-    except Exception as e:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except (OSError, ValueError) as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
     finally:
         # Cleanup
-        if hosts_manager:
-            hosts_manager.cleanup_all()
-        if daemon:
-            daemon.cleanup()
+        if PostmanAuthDaemon._hosts_manager:
+            PostmanAuthDaemon._hosts_manager.cleanup_all()
+        if PostmanAuthDaemon._instance:
+            PostmanAuthDaemon._instance.cleanup()
 
 
 if __name__ == '__main__':
