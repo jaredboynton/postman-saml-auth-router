@@ -12,14 +12,17 @@
     "idp_type": "azure",
     "_idp_type_help": "Set to 'azure' for Azure AD SAML integration",
     
+    "postman_integration_id": "YOUR_POSTMAN_INTEGRATION_ID",
+    "_postman_integration_id_help": "[REQUIRED] The unique ID from your Azure SAML URLs. Find this in Azure Portal > Enterprise Applications > Postman > Single sign-on. It appears in all three URLs after /sso/adfs/. Format: 32-character hex string like 'dfdb9eec3ff9412e851e17d751184e17'",
+    
     "tenant_id": "YOUR_AZURE_TENANT_ID",
     "_tenant_id_help": "[REQUIRED] Azure AD Tenant ID (Directory ID). Find in Azure Portal > Azure Active Directory > Overview > Tenant ID. Format: 12345678-1234-1234-1234-123456789012",
     
     "app_id": "YOUR_AZURE_APP_ID",
-    "_app_id_help": "[REQUIRED] Azure AD Application (Client) ID. Find in Azure Portal > Enterprise Applications > YOUR_POSTMAN_APP > Properties > Application ID. Format: 87654321-4321-4321-4321-210987654321",
+    "_app_id_help": "[OPTIONAL] Azure AD Application (Client) ID. Find in Azure Portal > Enterprise Applications > YOUR_POSTMAN_APP > Properties > Application ID",
     
     "idp_url": "https://login.microsoftonline.com/YOUR_AZURE_TENANT_ID/saml2",
-    "_idp_url_help": "[OPTIONAL] Full SAML SSO URL. Replace YOUR_AZURE_TENANT_ID with your actual tenant ID. Find in Azure Portal > Enterprise Applications > YOUR_POSTMAN_APP > Single sign-on > SAML Settings"
+    "_idp_url_help": "[OPTIONAL] Azure AD SAML endpoint. Replace YOUR_AZURE_TENANT_ID with your actual tenant ID"
   },
   
   "_ssl_configuration": "SSL Certificate Configuration - daemon requires valid certificates:",
@@ -70,17 +73,20 @@
     "1. In Azure Portal, go to Enterprise Applications",
     "2. Add 'Postman' from the gallery (or create custom SAML app)",
     "3. Configure Single Sign-On with SAML",
-    "4. Set Identifier (Entity ID): https://identity.getpostman.com",
-    "5. Set Reply URL: https://identity.getpostman.com/sso/callback",
-    "6. Configure user attributes and claims as needed",
-    "7. Copy the Tenant ID and Application ID to this config",
-    "8. Test SAML configuration in Azure before deploying daemon"
+    "4. Set Identifier (Entity ID): https://identity.getpostman.com/sso/saml/{INTEGRATION_ID}",
+    "5. Set Reply URL: https://identity.getpostman.com/sso/adfs/{INTEGRATION_ID}/callback",
+    "6. Set Sign on URL: https://identity.getpostman.com/sso/adfs/{INTEGRATION_ID}/init",
+    "7. Note the INTEGRATION_ID from these URLs - you'll need it for this config",
+    "8. Configure user attributes and claims as needed",
+    "9. Copy the Integration ID and Tenant ID to this config",
+    "10. Test SAML configuration in Azure before deploying daemon"
   ],
   
   "_example_azure_config": {
     "postman_team_name": "contoso-engineering",
     "idp_config": {
       "idp_type": "azure",
+      "postman_integration_id": "dfdb9eec3ff9412e851e17d751184e17",
       "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47",
       "app_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "idp_url": "https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/saml2"
@@ -96,7 +102,7 @@
   ],
   
   "_troubleshooting_azure": [
-    "ISSUE: AADSTS50011 error → Verify Reply URL in Azure matches exactly: https://identity.getpostman.com/sso/callback",
+    "ISSUE: AADSTS50011 error → Verify Reply URL in Azure matches exactly: https://identity.getpostman.com/sso/adfs/{YOUR_INTEGRATION_ID}/callback",
     "ISSUE: AADSTS700016 error → Check Application ID (app_id) is correct",
     "ISSUE: AADSTS50105 error → User not assigned to application in Azure AD",
     "ISSUE: Certificate errors → Ensure daemon certificate is trusted on client machines",
