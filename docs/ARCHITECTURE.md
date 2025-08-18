@@ -48,7 +48,7 @@ Session Return:
 
 ## Core Components
 
-### 1. Authentication Daemon (`auth_router_final.py`)
+### 1. Authentication Daemon (`saml_enforcer.py`)
 
 The main daemon that listens on port 443 and handles all intercepted requests.
 

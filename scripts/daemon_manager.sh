@@ -63,9 +63,9 @@ case "$1" in
         
         # Kill any existing daemon
         echo "Checking for existing daemon processes..."
-        if pgrep -f "python.*auth_router" > /dev/null; then
+        if pgrep -f "python.*saml_enforcer" > /dev/null; then
             echo -e "${YELLOW}Found existing daemon, killing it...${NC}"
-            pkill -9 -f "python.*auth_router" || true
+            pkill -9 -f "python.*saml_enforcer" || true
             sleep 1
         fi
         
@@ -78,10 +78,10 @@ case "$1" in
         
         # Start daemon
         echo -e "${GREEN}Starting daemon in ENFORCE mode...${NC}"
-        python3 src/auth_router_final.py --mode enforce &
+        python3 src/saml_enforcer_final.py --mode enforce &
         
         sleep 2
-        if pgrep -f "auth_router_final" > /dev/null; then
+        if pgrep -f "saml_enforcer_final" > /dev/null; then
             echo -e "${GREEN}✓ Daemon started successfully!${NC}"
             echo "Test with: curl -k https://identity.getpostman.com/health"
         else
@@ -92,7 +92,7 @@ case "$1" in
         
     stop)
         echo -e "${YELLOW}Stopping Postman Auth Daemon...${NC}"
-        pkill -9 -f "python.*auth_router" || true
+        pkill -9 -f "python.*saml_enforcer" || true
         echo -e "${GREEN}✓ Daemon stopped${NC}"
         ;;
         
@@ -103,7 +103,7 @@ case "$1" in
         ;;
         
     status)
-        if pgrep -f "auth_router_final" > /dev/null; then
+        if pgrep -f "saml_enforcer_final" > /dev/null; then
             echo -e "${GREEN}✓ Daemon is running${NC}"
             echo ""
             echo "Health check:"
@@ -349,7 +349,7 @@ EOF
         # 3. Check daemon is running
         echo ""
         echo "Checking daemon status..."
-        if pgrep -f "auth_router_final" > /dev/null; then
+        if pgrep -f "saml_enforcer_final" > /dev/null; then
             echo -e "  ${GREEN}✓${NC} Daemon is running"
             
             # Check health endpoint

@@ -130,10 +130,10 @@ function Start-Daemon {
     
     # Start daemon as background process
     Write-ColorOutput "Starting daemon in ENFORCE mode..." -Color Green
-    $scriptPath = Join-Path (Get-Location) "src\auth_router_final.py"
+    $scriptPath = Join-Path (Get-Location) "src\saml_enforcer.py"
     
     if (-not (Test-Path $scriptPath)) {
-        Write-ColorOutput "✗ auth_router_final.py not found at: $scriptPath" -Color Red
+        Write-ColorOutput "✗ saml_enforcer.py not found at: $scriptPath" -Color Red
         exit 1
     }
     

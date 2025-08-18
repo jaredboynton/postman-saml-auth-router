@@ -13,7 +13,7 @@ $installed = $true
 $reasons = @()
 
 # Check if daemon is installed
-$daemonPath = "$env:ProgramData\Postman\AuthRouter\src\auth_router_final.py"
+$daemonPath = "$env:ProgramData\Postman\AuthRouter\src\saml_enforcer.py"
 if (-not (Test-Path $daemonPath)) {
     $installed = $false
     $reasons += "Auth router not installed at $daemonPath"

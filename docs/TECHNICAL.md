@@ -43,7 +43,7 @@ The daemon uses static `/etc/hosts` entries by default:
 Advanced mode that modifies `/etc/hosts` based on authentication state:
 
 ```bash
-sudo python3 auth_router_final.py --dynamic-hosts
+sudo python3 saml_enforcer.py --dynamic-hosts
 ```
 
 **Advantages:**
@@ -201,7 +201,7 @@ certutil -addstore -f "Root" cert.pem
 ## Running the Daemon
 
 ```bash
-sudo python3 auth_router_final.py [--config config.json] [--dynamic-hosts]
+sudo python3 saml_enforcer.py [--config config.json] [--dynamic-hosts]
 ```
 
 The daemon actively redirects all authentication to SAML and prevents bypass attempts.
@@ -368,5 +368,5 @@ All bypass attempts are logged and tracked in real-time metrics accessible via t
 
 ---
 
-*For implementation source code, see `src/auth_router_final.py`*  
+*For implementation source code, see `src/saml_enforcer.py`*  
 *For deployment instructions, see platform-specific guides in `docs/`*

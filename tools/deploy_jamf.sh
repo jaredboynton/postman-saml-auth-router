@@ -386,7 +386,7 @@ EOF
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>$INSTALL_DIR/src/auth_router_final.py</string>
+        <string>$INSTALL_DIR/src/saml_enforcer.py</string>
         <string>--mode</string>
         <string>enforce</string>
     </array>
@@ -558,7 +558,7 @@ create_embedded_files() {
     log_message "Creating minimal deployment files..."
     
     # Create Python daemon file (simplified version)
-    cat > "$INSTALL_DIR/src/auth_router_final.py" << 'EOF'
+    cat > "$INSTALL_DIR/src/saml_enforcer.py" << 'EOF'
 #!/usr/bin/env python3
 """
 Postman SAML Authentication Router - JAMF Minimal Version
@@ -631,7 +631,7 @@ if __name__ == "__main__":
     main()
 EOF
     
-    chmod +x "$INSTALL_DIR/src/auth_router_final.py"
+    chmod +x "$INSTALL_DIR/src/saml_enforcer.py"
     log_message "Embedded Python daemon created"
 }
 

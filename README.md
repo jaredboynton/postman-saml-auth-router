@@ -26,7 +26,7 @@ When users try to sign into Postman (Web or Desktop), they are automatically red
 │                                                                           │
 │ Daemon Security Checks:                                                   │
 │   1. Bypass detection (intent=switch-account, fake auth_challenge)        │
-│   2. Desktop flow validation (auth_challenge requires /client/login)      │
+│   2. Desktop flow validation (validates, preserves real auth_challenge)   │
 │   3. State machine: IDLE → AUTH_INIT                                      │
 │                                                                           │
 │ Decision: ✓ INTERCEPT → SAML redirect                                     │
@@ -209,7 +209,7 @@ postman_redirect_daemon/
 │   └── daemon_manager.ps1          # Windows PowerShell management
 │
 ├── src/                            # Source code
-│   ├── auth_router_final.py        # Main daemon with state machine
+│   ├── saml_enforcer.py            # Main daemon with state machine
 │   └── dynamic_hosts/              # Optional hosts management
 │       └── hosts_manager.py        # Runtime hosts file manager if you need it
 │

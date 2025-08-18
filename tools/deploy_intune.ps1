@@ -172,7 +172,7 @@ if __name__ == "__main__":
     if (-not (Test-Path $srcDir)) {
         New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
     }
-    $pythonDaemon | Out-File -FilePath "$srcDir\auth_router_final.py" -Encoding UTF8
+    $pythonDaemon | Out-File -FilePath "$srcDir\saml_enforcer.py" -Encoding UTF8
     Write-Log "Embedded Python daemon created"
 }
 
@@ -445,7 +445,7 @@ function Create-ScheduledTask {
         # Create new task
         $action = New-ScheduledTaskAction `
             -Execute $pythonPath `
-            -Argument "$InstallDir\src\auth_router_final.py --mode enforce" `
+            -Argument "$InstallDir\src\saml_enforcer.py --mode enforce" `
             -WorkingDirectory $InstallDir
         
         $trigger = New-ScheduledTaskTrigger -AtStartup

@@ -108,7 +108,7 @@ After setup completes:
    ├── payload/
    │   ├── usr/local/postman-auth/
    │   │   ├── scripts/daemon_manager.sh
-   │   │   ├── src/auth_router_final.py
+   │   │   ├── src/saml_enforcer.py
    │   │   └── config/config.json.template
    │   ├── Library/LaunchDaemons/
    │   │   └── com.company.postman-auth.plist
@@ -833,7 +833,7 @@ For advanced deployments, customize the LaunchDaemon:
     
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/postman-auth/src/auth_router_final.py</string>
+        <string>/usr/local/postman-auth/src/saml_enforcer.py</string>
         <string>--config</string>
         <string>/etc/postman-auth/config.json</string>
         <string>--mode</string>

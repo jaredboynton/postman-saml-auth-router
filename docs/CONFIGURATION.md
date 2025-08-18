@@ -265,7 +265,7 @@ The daemon supports configuration reloading without restart:
 
 ```bash
 # Send HUP signal to reload configuration
-sudo kill -HUP $(pgrep -f auth_router_final.py)
+sudo kill -HUP $(pgrep -f saml_enforcer.py)
 ```
 
 ### Configuration Validation
@@ -387,10 +387,10 @@ Test configuration without full deployment:
 
 ```bash
 # Dry run mode
-sudo python3 src/auth_router_final.py --config config/config.json --dry-run
+sudo python3 src/saml_enforcer.py --config config/config.json --dry-run
 
 # Validate only
-sudo python3 src/auth_router_final.py --config config/config.json --validate
+sudo python3 src/saml_enforcer.py --config config/config.json --validate
 ```
 
 ## Migration Guide
@@ -416,7 +416,7 @@ If migrating from an older configuration format:
 
 4. **Test with dry run**
    ```bash
-   sudo python3 src/auth_router_final.py --config config/config.json --dry-run
+   sudo python3 src/saml_enforcer.py --config config/config.json --dry-run
    ```
 
 5. **Deploy**

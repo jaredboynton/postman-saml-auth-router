@@ -409,7 +409,7 @@ $endMarker
         # Create service wrapper script
         $serviceScript = @"
 `$pythonPath = "$pythonPath"
-`$scriptPath = "$InstallDir\src\auth_router_final.py"
+`$scriptPath = "$InstallDir\src\saml_enforcer.py"
 Start-Process -FilePath `$pythonPath -ArgumentList "`$scriptPath --mode enforce" -NoNewWindow -Wait
 "@
         $serviceScript | Out-File -FilePath "$InstallDir\service_wrapper.ps1" -Encoding UTF8
@@ -501,7 +501,7 @@ Start-Process -FilePath `$pythonPath -ArgumentList "`$scriptPath --mode enforce"
             & $nssmPath remove $serviceName confirm 2>$null
             
             # Install service
-            & $nssmPath install $serviceName $pythonPath "`"$InstallDir\src\auth_router_final.py`"" "--mode" "enforce"
+            & $nssmPath install $serviceName $pythonPath "`"$InstallDir\src\saml_enforcer.py`"" "--mode" "enforce"
             
             # Configure service settings
             & $nssmPath set $serviceName DisplayName "Postman SAML Authentication Router"
@@ -539,7 +539,7 @@ Start-Process -FilePath `$pythonPath -ArgumentList "`$scriptPath --mode enforce"
             
             $action = New-ScheduledTaskAction `
                 -Execute $pythonPath `
-                -Argument "`"$InstallDir\src\auth_router_final.py`" --mode enforce" `
+                -Argument "`"$InstallDir\src\saml_enforcer.py`" --mode enforce" `
                 -WorkingDirectory $InstallDir
             
             $trigger = New-ScheduledTaskTrigger -AtStartup

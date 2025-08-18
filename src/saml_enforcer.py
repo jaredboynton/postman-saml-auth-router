@@ -9,7 +9,7 @@ Designed for enterprise MDM deployment with ZERO external dependencies.
 Uses only Python standard library for maximum compatibility and security.
 
 Usage:
-    sudo python3 auth_router_final.py [--config config.json] [--dynamic-hosts]
+    sudo python3 saml_enforcer.py [--config config.json] [--dynamic-hosts]
 
 Enterprise Features:
     - State machine tracking of authentication flow

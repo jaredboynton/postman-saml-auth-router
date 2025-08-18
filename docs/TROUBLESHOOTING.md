@@ -266,7 +266,7 @@ sudo aa-complain /usr/bin/python3
 **Check for busy loops**:
 ```bash
 # Monitor CPU usage
-top -p $(pgrep -f auth_router_final.py)
+top -p $(pgrep -f saml_enforcer.py)
 
 # Check log spam
 tail -f /var/log/postman-auth.log | grep -c "DEBUG"
