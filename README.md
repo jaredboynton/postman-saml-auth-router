@@ -1,280 +1,64 @@
-# Postman SAML Authentication Enforcer
+# Simplified Postman SAML Enforcer - Implementation Guide
 
-**Enterprise-grade SAML enforcement for Postman Web and Desktop applications**
+## What Changed?
 
-A local authentication proxy that forces all Postman sign-ins through your corporate SSO provider, preventing shadow IT and ensuring compliance across your entire fleet.
+Minor but significant changes were made to allow state parameters to be passed directly to the SAML `/init/` URL, avoiding the need for complex state handling and IdP-specific configuration. We can now use a streamlined approach.
 
- **The Goal:** Prevent data exfiltration by ensuring users can only access your designated enterprise Postman team. Without this enforcement, users can sign into personal or other organizational accounts and potentially leak sensitive API collections, environment variables, and documentation. SAML enforcement is the only way to guarantee users authenticate exclusively through your enterprise identity provider.
+## Core Architecture Simplifications
 
-## Essential Reading
+Previously, we required complex state management and IdP-specific URL construction logic. We can now utilize a simple copy-paste with simple parameter appending. Instead of maintaining separate configuration fields for tenant IDs, app IDs, and other IdP-specific parameters, the system now accepts a complete `saml_init_url` that gets used directly with preserved query parameters.
 
-**[Why This Solution Is Necessary - Technical Assessment](docs/ANALYSIS_OF_ALTERNATIVES.md)** - Before implementing, please take a look at the analysis that explains why enterprise security tools (CrowdStrike, Zscaler, F5) cannot achieve SAML enforcement for Postman. 
+This architectural change reduces complexity significantly while maintaining full compatibility with existing SAML flows, and parameter preservation logic ensures that authentication challenges, team information, and continuation URLs are correctly forwarded to the IdP without requiring deep understanding of each provider's specific requirements.
 
-## What This Does & How It Works
+## Configuration Format
 
-When users try to sign into Postman (Web or Desktop), they are automatically redirected to your company's SAML identity provider - no authentication choice, no personal accounts, just secure enterprise access.
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: Initial Login Attempt                                             │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Entry Points:                                                             │
-│   • Desktop: /client/login?auth_challenge=xyz123...                       │
-│   • Browser: /login?continue=https://app.postman.com/...                  │
-│                                                                           │
-│ Request → identity.getpostman.com → 127.0.0.1:443 (via /etc/hosts)        │
-│                                                                           │
-│ Daemon Security Checks:                                                   │
-│   1. Bypass detection (intent=switch-account, fake auth_challenge)        │
-│   2. Desktop flow validation (validates, preserves real auth_challenge)   │
-│   3. State machine: IDLE → AUTH_INIT                                      │
-│                                                                           │
-│ Decision: ✓ INTERCEPT → SAML redirect                                     │
-└───────────────────────────────────────────────────────────────────────────┘
-                                      ↓
-┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: SAML Redirection & Parameter Preservation                         │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Daemon state: AUTH_INIT → SAML_FLOW                                       │
-│                                                                           │
-│ CRITICAL: Parameters are preserved through SAML flow:                     │
-│   • Desktop: auth_challenge passed to IdP → preserved in SAML             │
-│   • Browser: continue URL validated & preserved                           │
-│                                                                           │
-│ Redirect to: /sso/{idp}/{tenant}/init?team={team}&{preserved_params}      │
-│   → Your IdP (Okta/Azure/Ping)                                            │
-│   → User authenticates with corporate credentials                         │
-│   → SAML assertion generated with preserved context                       │
-└───────────────────────────────────────────────────────────────────────────┘
-                                      ↓
-┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: OAuth Continuation (Protected from Interception)                  │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Return with SAML token + preserved params                                 │
-│   → identity.postman.com/continue                                         │
-│   → 127.0.0.1:443 (daemon still sees traffic)                             │
-│                                                                           │
-│ Daemon behavior:                                                          │
-│   • Detects /continue path                                                │
-│   • State: SAML_FLOW → OAUTH_CONTINUATION                                 │
-│   • CRITICAL: Does NOT intercept (would break OAuth)                      │
-│   • Proxies to real Postman IP with SNI for Cloudflare                    │
-│                                                                           │
-│ OAuth validates SAML + exchanges for Postman session                      │
-└───────────────────────────────────────────────────────────────────────────┘
-                                      ↓
-┌───────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: Authenticated Session                                             │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Results:                                                                  │
-│   • Desktop: Returns to app with auth_challenge validated                 │
-│   • Browser: Redirects to continue URL with session                       │
-│                                                                           │
-│ Daemon state: OAUTH_CONTINUATION → IDLE                                   │
-│   • 30-second timeout prevents stuck states                               │
-│   • Ready for next authentication request                                 │
-│                                                                           │
-│ User has valid Postman session enforced via SAML                          │
-└───────────────────────────────────────────────────────────────────────────┘
-```
-
-The daemon intercepts authentication requests and enforces SAML-only access through a sophisticated state machine that preserves OAuth flows while blocking bypass attempts.
-
-**Key Benefits:**
-- **100% SAML enforcement** for all Postman authentication flows
-- **Works everywhere:** Office, home, VPN, coffee shop
-- **Quick deployment** to devices via MDM, no network changes
-- **No dependencies** - Pure Python standard library
-- **99% data exfiltration prevention** when combined with Domain Capture and Device Trust. While this won't stop a copy-paster or an intentionally malicious actor, this should stop everything else.
-
-## Security Highlights
-
-- **Bypass Prevention**: Detects and blocks all known bypass techniques
-- **Session Control**: Instant session termination for offboarding and fine-tuning session length via `clear_mac_sessions.sh` and `clear_win_sessions.ps1` scripts deployed via MDM
-- **Audit Logging**: SIEM-ready structured logs
-- **Certificate Security**: Enterprise CA support with MDM deployment
-- **Process Protection**: Cannot be killed even with admin privileges when deployed via MDM
-
-See [Security Documentation](docs/SECURITY.md) for complete details.
-
-## Why This Is The Only Viable Solution
-
-Organizations often ask: "Can we implement this with our existing security tools like CrowdStrike, Zscaler, or F5 instead?"
-
-**Short Answer**: No. I analyzed every alternative approach extensively.
-
-**Why Alternatives Fail**: OAuth authentication flows inherently require sophisticated session state management that enterprise security platforms fundamentally cannot provide:
-
-- **OAuth Continuation Protection**: The daemon's 4-state machine is necessary to prevent dropping state tracking throughout the flow. All alternatives would break this, causing 401 authentication errors.
-- **Desktop Flow Detection**: Complex two-step validation prevents replay attacks. Alternatives cannot track session state across requests.
-- **Application-Specific Logic**: 4 layers of bypass prevention understanding application-specific parameters. Alternatives can be trivially bypassed.
-- **Enterprise Infrastructure**: SNI-aware SSL proxy for Cloudflare, nslookup + fallback IPs for corporate firewalls, real-time SIEM metrics.
-
-**What Alternatives Can Do**:
-- **Detection & Alerting**: Monitor Postman usage
-- **Complete Blocking**: Prevent all Postman access 
-- ❌ **HOWEVER --** they cannot redirect while preserving OAuth
-
-**The Technical Reality**: This is a fundamental OAuth architecture challenge, not a Postman limitation. Infrastructure tools operate at the wrong layer, and even dedicated OAuth proxy solutions struggle with session state management across any OAuth-enabled application.
-
-**Comprehensive Analysis**: See [Analysis of Alternatives](docs/ANALYSIS_OF_ALTERNATIVES.md) for detailed technical assessment with supporting research from CrowdStrike, Zscaler, F5, and OAuth security studies.
-
-**Bottom Line**: Organizations wanting "SAML enforcement while maintaining OAuth application functionality" have exactly one viable option: application-aware proxy solutions like this local daemon approach.
-
-## Local Testing & Management Commands
-
-**Note**: These steps are for local testing and validation only. Production deployment uses MDM tools (JAMF, Intune, SCCM) which handle installation, configuration, and certificate management automatically. Management commands also work in MDM deployments for troubleshooting and status monitoring.
-
-### macOS/Linux
-```bash
-# 1. Configure your IdP
-cp config/config.json.template config/config.json
-vi config/config.json  # Add team name & IdP details
-
-# 2. Run setup (local testing only)
-sudo ./scripts/daemon_manager.sh setup
-
-# 3. Test authentication
-open https://postman.co  # Should redirect to your IdP
-```
-
-### Windows
-```powershell
-# 1. Configure your IdP (Run as Administrator)
-Copy-Item config\config.json.template config\config.json
-notepad config\config.json
-
-# 2. Run setup (local testing only)
-.\scripts\daemon_manager.ps1 setup
-
-# 3. Test authentication
-Start-Process https://postman.co
-```
-
-### Management Commands
-```bash
-# Check status
-sudo ./scripts/daemon_manager.sh status
-
-# View health metrics
-curl -k https://localhost:443/health
-
-# Restart daemon
-sudo ./scripts/daemon_manager.sh restart
-
-# Emergency stop
-sudo ./scripts/daemon_manager.sh cleanup
-```
-
-## Enterprise Deployment
-
-**Supported MDM Platforms:**
-- JAMF (macOS)
-- Microsoft Intune (Windows)
-- SCCM (Windows)
-- Workspace ONE (Cross-platform)
-
-**Supported Identity Providers:**
-- Okta
-- Azure AD
-- Ping Identity
-- Any SAML 2.0 provider
-
-**Scale:** Deploy identically to 10 or 10,000 devices via MDM.
-
-See platform-specific deployment guides: [macOS](docs/MACOS_DEPLOYMENT.md) and [Windows](docs/WINDOWS_DEPLOYMENT.md) for complete enterprise deployment instructions.
-
-## Configuration Example
+The simplified configuration uses a single `saml_init_url` field instead of complex IdP-specific structures:
 
 ```json
 {
   "postman_team_name": "your-team",
-  "idp_config": {
-    "idp_type": "okta",
-    "okta_tenant_id": "dev-12345678"
-  }
+  "saml_init_url": "https://identity.getpostman.com/sso/okta/db1b1a3764f24213906d682e26fd366f/init",
+  "ssl_cert": "ssl/cert.pem",
+  "ssl_key": "ssl/key.pem",
+  "listen_port": 443
 }
 ```
 
-See [Configuration Guide](docs/CONFIGURATION.md) for all options.
+This approach works identically across all IdP types including Okta, Azure AD, and generic SAML providers. The URL contains all necessary routing information, while the daemon handles parameter preservation and forwarding automatically.
 
-## Project Structure
+## Basic Usage
 
-```
-postman_redirect_daemon/
-├── README.md                       # This file
-│
-├── scripts/                        # Management scripts
-│   ├── daemon_manager.sh           # macOS/Linux management
-│   └── daemon_manager.ps1          # Windows PowerShell management
-│
-├── src/                            # Source code
-│   ├── saml_enforcer.py            # Main daemon with state machine
-│   └── dynamic_hosts/              # Optional hosts management
-│       └── hosts_manager.py        # Runtime hosts file manager if you need it
-│
-├── config/                         # Configuration files
-│   ├── config.json.template        # Configuration template
-│   └── config.json                 # Your configuration (gitignored)
-│
-├── ssl/                            # SSL certificates (local testing only)
-│   ├── cert.conf                   # Certificate configuration
-│   ├── cert.pem                    # SSL certificate (generated for local testing)
-│   └── key.pem                     # Private key (generated for local testing)
-│
-├── tools/                          # Utility scripts
-│   ├── clear_mac_sessions.sh       # macOS session clearing
-│   ├── clear_win_sessions.ps1      # Windows session clearing
-│   ├── deploy_jamf.sh              # JAMF deployment helper
-│   ├── deploy_intune.ps1           # Intune deployment template
-│   └── deploy_sccm.ps1             # SCCM deployment template
-│
-└── docs/                           # Documentation
-    ├── SECURITY.md                 # Security model & controls
-    ├── ARCHITECTURE.md             # Technical architecture
-    ├── CONFIGURATION.md            # Configuration reference
-    ├── TROUBLESHOOTING.md          # Troubleshooting guide
-    ├── ANALYSIS_OF_ALTERNATIVES.md # Why alternatives cannot work
-    ├── TECHNICAL.md                # Implementation details
-    ├── AUTHENTICATION_FLOW.md      # Flow analysis, useful for troubleshooting
-    ├── MACOS_DEPLOYMENT.md         # macOS deployment guide
-    └── WINDOWS_DEPLOYMENT.md       # Windows deployment guide
+The daemon operates as an SSL-terminating proxy that intercepts HTTPS requests to `identity.getpostman.com` on specific authentication paths. When a request matches the target paths (`/login`, `/enterprise/login`, `/enterprise/login/authchooser`), the daemon extracts query parameters and redirects the client to the configured SAML URL with those parameters preserved.
 
-**Runtime Log Locations:**
-- macOS/Linux: `/var/log/postman-auth.log`
-- Windows: `C:\ProgramData\Postman\logs\postman-auth.log`
+Starting the daemon requires administrative privileges for port 443 binding and certificate trust. The system modifies `/etc/hosts` to redirect the target domain to localhost, then listens for incoming HTTPS connections. All non-authentication requests are proxied transparently to the upstream server.
 
-**Enterprise Deployment Notes:**
-- SSL certificates: Enterprise deployments use certificates from your organization's CA, not the local ssl/ directory
-- Configuration: Production config deployed via MDM, not local config.json file
-- Port conflicts: If port 443 is in use, comprehensive reverse proxy and port forwarding solutions are documented in the deployment guides
-```
+Certificate trust must be established before operation, as the daemon presents itself as `identity.getpostman.com` to terminate SSL connections. The certificate generation process creates a self-signed certificate with the appropriate subject alternative names, which must then be trusted by the operating system's certificate store.
 
-## Documentation
+## Operational Requirements
 
-### Planning & Evaluation
-- [Security Model & Threat Analysis](docs/SECURITY.md) - Comprehensive security documentation
-- [Architecture Overview](docs/ARCHITECTURE.md) - Technical design and components
-- [Analysis of Alternatives](docs/ANALYSIS_OF_ALTERNATIVES.md) - Why alternatives cannot work
+The daemon requires several system-level permissions and configurations. Administrative access is necessary for binding to port 443, modifying the hosts file, and installing trusted certificates. The SSL certificate must be trusted for the `identity.getpostman.com` domain to prevent browser warnings during SSL termination.
 
-### Implementation
-- [macOS Deployment](docs/MACOS_DEPLOYMENT.md) - JAMF, Apple Business Manager, Munki deployment
-- [Windows Deployment](docs/WINDOWS_DEPLOYMENT.md) - Intune, SCCM, Group Policy deployment
-- [Configuration Reference](docs/CONFIGURATION.md) - All configuration options
-- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
+Network connectivity to the real `identity.getpostman.com` is required for proxying non-authentication requests. The daemon performs DNS resolution to determine the upstream IP address, then establishes SSL connections with proper SNI headers to maintain compatibility with CDN and load balancer infrastructure.
 
-### Additional Resources
-- [Authentication Flow](docs/AUTHENTICATION_FLOW.md) - Detailed flow analysis as an FYI
-  
-## Troubleshooting
+## Management Operations
 
-For deployment assistance or questions:
-1. Check [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
-2. Review platform-specific deployment guides: [macOS](docs/MACOS_DEPLOYMENT.md) or [Windows](docs/WINDOWS_DEPLOYMENT.md)
-3. Contact your IT security team
+Simplified daemon management -- just start, stop. The simplified architecture eliminates most troubleshooting complexity since the configuration is straightforward and the URL construction logic is minimal. Log files provide insight into request routing decisions and any errors encountered during SSL termination or upstream proxying.
 
----
+Certificate renewal follows standard SSL certificate practices, though the self-signed approach means generating new certificates periodically and updating the trust store. The daemon automatically loads certificate changes when restarted, requiring no configuration updates for certificate rotation.
 
-**Ready to deploy?** This production-ready solution provides complete SAML enforcement with enterprise-grade security. Implementation time: 30 minutes. No infrastructure changes required.
+## Deployment Strategy
 
-*For detailed technical information, architectural decisions, and advanced configurations, see the [full documentation](docs/).*
+A minimal deployment approach would involve certificate generation and trust establishment, hosts file modification, daemon installation, and service configuration. 
+
+The deployment process would utilize Enterprise CA certificates with appropriate subject alternative names for the target domain. System configuration includes adding the localhost redirect to the hosts file and establishing certificate trust through the operating system's certificate management interface. The daemon binary would be installed with appropriate permissions and configured to start automatically.
+
+Service management would use standard system service frameworks like systemd on Linux or launchd on macOS. The minimal configuration requirements make automation straightforward, requiring only the SAML URL and basic daemon settings to be customized per organization.
+
+## Alternative Approaches
+
+Two new proof-of-concept alternatives demonstrate how enterprise infrastructure could handle SAML enforcement without custom daemon deployment. 
+
+1. The Zscaler Client Connector POC shows how device-level proxy agents could implement the same functionality using PAC files and local proxy components. 
+2. The DNS interceptor approach demonstrates how local DNS servers could replace hosts file modification while maintaining the same SSL termination and redirect logic.
+
+Both alternatives maintain identical parameter handling and SAML redirect behavior while eliminating a certain amount of deployment complexity. The enterprise proxy approach removes the need for hosts file modification and port 443 binding, while the DNS approach provides a more standard network interception method. That said, all approaches require certificate trust establishment for SSL termination capabilities.
