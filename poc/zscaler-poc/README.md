@@ -56,3 +56,49 @@ function FindProxyForURL(url, host) {
 ```
 
 This simple logic demonstrates how Zscaler could implement domain-specific routing through their existing PAC file infrastructure, requiring minimal changes to their current proxy management capabilities.
+
+## Parameter Handling Requirements
+
+### Authentication Flow Parameters
+
+The Zscaler SAML agent must correctly extract and preserve authentication parameters from intercepted requests to maintain compatibility with both Postman Desktop and Browser authentication flows:
+
+**Desktop Flow Parameters:**
+- `auth_challenge` - Critical parameter that enables Desktop app authentication
+- `team` - Team identifier for multi-tenant environments
+- `continue` - Post-authentication redirect URL
+
+**Browser Flow Parameters:**  
+- `continue` - Browser redirect URL after successful authentication
+- `team` - Team context for organization routing
+- Additional query parameters specific to enterprise SSO configurations
+
+### Parameter Extraction Process
+
+1. **Request Interception**: When the PAC file routes `identity.getpostman.com/login` traffic to the local agent
+2. **SSL Termination**: Agent terminates SSL to inspect the full request path and query parameters
+3. **Parameter Parsing**: Extract all query parameters from the original authentication request
+4. **SAML URL Construction**: Build the enterprise SAML URL with preserved parameters
+5. **Redirect Response**: Return 302 redirect with the complete SAML URL
+
+### Configuration Requirements
+
+The Zscaler agent requires proper configuration to handle parameter mapping:
+
+```json
+{
+  "postman_team_name": "your-enterprise-team",
+  "saml_init_url": "https://identity.getpostman.com/sso/okta/your-idp-id/init",
+  "preserve_auth_challenge": true,
+  "preserve_continue_url": true
+}
+```
+
+### Critical Implementation Notes
+
+- **Parameter Preservation**: All original query parameters must be maintained during SAML redirect
+- **URL Validation**: Continue URLs must be validated to prevent open redirect vulnerabilities  
+- **Flow Detection**: Agent must distinguish between Desktop (`auth_challenge` present) and Browser flows
+- **Error Handling**: Graceful fallback when parameters are missing or malformed
+
+This parameter handling ensures seamless authentication flow preservation regardless of how users access Postman (Desktop app vs. web browser), maintaining the same user experience while enforcing enterprise SAML policies.
