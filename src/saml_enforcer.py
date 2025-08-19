@@ -321,7 +321,7 @@ class AuthStateMachine:
             
             # Handle SAML_FLOW state
             if self.current_state == AuthState.SAML_FLOW:
-                if "/continue" in path and host in ["identity.postman.co", "identity.postman.com"]:
+                if "/continue" in path and host in ["identity.postman.co", "identity.postman.com", "id.gw.postman.com"]:
                     self.current_state = AuthState.OAUTH_CONTINUATION
                     self.state_entered_at = datetime.now()
                 return False  # Never intercept during SAML flow
@@ -348,7 +348,8 @@ class AuthStateMachine:
             return False
         
         # Check for auth initialization
-        if not ("/client" in path or path.startswith("/login")):
+        # Only trigger on specific auth paths, not general /client-auth/ URLs
+        if not (path.startswith("/client/login") or path.startswith("/login")):
             return False
         
         # Initialize auth tracking
@@ -357,7 +358,7 @@ class AuthStateMachine:
         self.metrics['auth_attempts'] += 1
         
         # Desktop flow tracking
-        if "/client" in path:
+        if path.startswith("/client/login"):
             self.session_data['desktop_flow_initiated'] = True
             logger.debug("Desktop flow initiated via /client/login")
             return False  # Pass through Desktop client requests
@@ -473,6 +474,18 @@ class PostmanAuthHandler(http.server.BaseHTTPRequestHandler):
         # Parse query parameters
         parsed_url = urllib.parse.urlparse(path)
         query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # ALWAYS pass through critical auth flow URLs for Postman domains
+        # These are essential for OAuth and SAML flows to complete properly
+        if host in ["identity.getpostman.com", "identity.postman.co", "id.gw.postman.com"]:
+            # Pass through OAuth continuation, SAML callbacks, client auth, and success endpoints
+            if ("/continue" in parsed_url.path or 
+                "/callback" in parsed_url.path or 
+                "/client-auth/" in parsed_url.path or
+                "/success" in parsed_url.path):
+                logger.info(f"Passing through {method} {host}{path} - critical auth endpoint")
+                self._proxy_to_upstream(host, path, method)
+                return
         
         # Check for bypass attempts BEFORE state machine logic
         if host == "identity.getpostman.com" and parsed_url.path.startswith('/login'):

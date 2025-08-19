@@ -33,9 +33,9 @@ add_hosts_entries() {
 
 $START_MARKER
 # Postman SAML Enforcement - Redirects authentication to localhost
+# Only identity.getpostman.com needs redirection (for /login interception)
+# Other domains go directly to real servers (no interception needed)
 127.0.0.1 identity.getpostman.com
-127.0.0.1 identity.postman.co
-127.0.0.1 id.gw.postman.com
 $END_MARKER
 EOF
         echo -e "${GREEN}✓ Hosts entries added${NC}"
