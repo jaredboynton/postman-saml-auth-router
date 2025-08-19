@@ -58,7 +58,7 @@ Service management would use standard system service frameworks like systemd on 
 
 Two new proof-of-concept alternatives demonstrate how enterprise infrastructure could handle SAML enforcement without custom daemon deployment. 
 
-1. The Zscaler Client Connector POC shows how device-level proxy agents could implement the same functionality using PAC files and local proxy components. 
-2. The DNS interceptor approach demonstrates how local DNS servers could replace hosts file modification while maintaining the same SSL termination and redirect logic.
+1. **[Zscaler Client Connector POC](poc/zscaler-poc/)** - Shows how device-level proxy agents could implement the same functionality using PAC files and local proxy components.
+2. **[DNS Interceptor POC](poc/dns-interceptor/)** - Demonstrates how local DNS servers could replace hosts file modification while maintaining the same SSL termination and redirect logic.
 
 Both alternatives maintain identical parameter handling and SAML redirect behavior while eliminating a certain amount of deployment complexity. The enterprise proxy approach removes the need for hosts file modification and port 443 binding, while the DNS approach provides a more standard network interception method. That said, all approaches require certificate trust establishment for SSL termination capabilities.
