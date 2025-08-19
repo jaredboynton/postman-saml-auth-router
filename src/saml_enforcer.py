@@ -624,7 +624,7 @@ class PostmanAuthDaemon:
     def start(self):
         """Start the daemon and begin listening for connections."""
         # Create HTTPS server
-        server_address = ('0.0.0.0', self.config.get('listen_port', HTTPS_PORT))
+        server_address = ('127.0.0.1', self.config.get('listen_port', HTTPS_PORT))
         self.server = SSLHTTPServer(server_address, PostmanAuthHandler, self.ssl_context)
         
         logger.info(f"Daemon started on port {self.config.get('listen_port', HTTPS_PORT)}")
