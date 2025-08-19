@@ -29,9 +29,8 @@ remove_hosts() {
 case "$1" in
     start)
         echo "Starting daemon..."
-        add_hosts
         
-        # Handle SSL certificates
+        # Handle SSL certificates FIRST (before modifying hosts)
         CERT_DIR="ssl"
         CERT_FILE="$CERT_DIR/cert.pem"
         KEY_FILE="$CERT_DIR/key.pem"
@@ -50,7 +49,6 @@ case "$1" in
             if [ ! -f "$CERT_DIR/cert.conf" ]; then
                 echo "Error: Certificate configuration not found at $CERT_DIR/cert.conf"
                 echo "This file is required for certificate generation"
-                remove_hosts
                 exit 1
             fi
             
@@ -68,17 +66,19 @@ case "$1" in
                 echo "Certificates generated successfully"
             else
                 echo "Certificate generation failed"
-                remove_hosts
                 exit 1
             fi
         fi
         
-        # Trust the certificate if not already trusted
+        # Trust the certificate if not already trusted (domain-specific, NOT root CA)
         if ! security find-certificate -c "identity.getpostman.com" /Library/Keychains/System.keychain 2>/dev/null | grep -q "identity.getpostman.com"; then
             echo "Adding certificate to system keychain..."
-            security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CERT_FILE"
+            security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain "$CERT_FILE"
             echo "Certificate trusted"
         fi
+        
+        # Add hosts entries AFTER certificates are ready
+        add_hosts
         
         pkill -f "saml_enforcer" 2>/dev/null || true
         lsof -ti:443 | xargs kill -9 2>/dev/null || true
