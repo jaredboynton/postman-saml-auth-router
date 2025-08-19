@@ -73,7 +73,7 @@ case "$1" in
         # Trust the certificate if not already trusted (domain-specific, NOT root CA)
         if ! security find-certificate -c "identity.getpostman.com" /Library/Keychains/System.keychain 2>/dev/null | grep -q "identity.getpostman.com"; then
             echo "Adding certificate to system keychain..."
-            security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain "$CERT_FILE"
+            security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain "$CERT_FILE"
             echo "Certificate trusted"
         fi
         
