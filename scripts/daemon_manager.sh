@@ -30,6 +30,56 @@ case "$1" in
     start)
         echo "Starting daemon..."
         add_hosts
+        
+        # Handle SSL certificates
+        CERT_DIR="ssl"
+        CERT_FILE="$CERT_DIR/cert.pem"
+        KEY_FILE="$CERT_DIR/key.pem"
+        CERT_DAYS=365
+        
+        # Check if certificates exist
+        if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+            echo "Generating SSL certificates..."
+            
+            # Create SSL directory if needed
+            if [ ! -d "$CERT_DIR" ]; then
+                mkdir -p "$CERT_DIR"
+            fi
+            
+            # Check for cert.conf
+            if [ ! -f "$CERT_DIR/cert.conf" ]; then
+                echo "Error: Certificate configuration not found at $CERT_DIR/cert.conf"
+                echo "This file is required for certificate generation"
+                remove_hosts
+                exit 1
+            fi
+            
+            # Generate certificate
+            openssl req -new -x509 -days $CERT_DAYS -nodes \
+                -out "$CERT_FILE" \
+                -keyout "$KEY_FILE" \
+                -config "$CERT_DIR/cert.conf" \
+                -extensions v3_req 2>/dev/null
+            
+            if [ $? -eq 0 ]; then
+                # Set permissions
+                chmod 600 "$KEY_FILE"
+                chmod 644 "$CERT_FILE"
+                echo "Certificates generated successfully"
+            else
+                echo "Certificate generation failed"
+                remove_hosts
+                exit 1
+            fi
+        fi
+        
+        # Trust the certificate if not already trusted
+        if ! security find-certificate -c "identity.getpostman.com" /Library/Keychains/System.keychain 2>/dev/null | grep -q "identity.getpostman.com"; then
+            echo "Adding certificate to system keychain..."
+            security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CERT_FILE"
+            echo "Certificate trusted"
+        fi
+        
         pkill -f "saml_enforcer" 2>/dev/null || true
         lsof -ti:443 | xargs kill -9 2>/dev/null || true
         sleep 1
