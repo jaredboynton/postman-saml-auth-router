@@ -1,7 +1,0 @@
-{
-  "postman_team_name": "your-team (as in your-team.postman.co)",
-  "saml_init_url": "https://identity.getpostman.com/(...)/init",
-  "ssl_cert": "ssl/cert.pem",
-  "ssl_key": "ssl/key.pem",
-  "listen_port": 8444
-}
