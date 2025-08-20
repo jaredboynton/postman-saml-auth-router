@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service Identity -->
+    <key>Label</key>
+    <string>com.postman.saml-enforcer</string>
+    
+    <key>Description</key>
+    <string>Postman SAML Enforcement Daemon</string>
+    
+    <!-- Program Configuration -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>src/saml_enforcer.py</string>
+    </array>
+    
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/usr/local/postman-saml-enforcer</string>
+    
+    <!-- Execution Context -->
+    <key>UserName</key>
+    <string>root</string>
+    
+    <key>GroupName</key>
+    <string>wheel</string>
+    
+    <!-- Startup Configuration -->
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <!-- Keep Alive Configuration -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart if crashed -->
+        <key>Crashed</key>
+        <true/>
+        
+        <!-- Restart if exits unsuccessfully -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <!-- Restart Throttling -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    
+    <!-- Environment Variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONPATH</key>
+        <string>/usr/local/postman-saml-enforcer</string>
+    </dict>
+    
+    <!-- Process Limits -->
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>1024</integer>
+        <key>NumberOfProcesses</key>
+        <integer>32</integer>
+    </dict>
+    
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>512</integer>
+        <key>NumberOfProcesses</key>
+        <integer>16</integer>
+    </dict>
+    
+    <!-- Logging Configuration -->
+    <key>StandardOutPath</key>
+    <string>/var/log/postman-saml-enforcer.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/var/log/postman-saml-enforcer-error.log</string>
+    
+    <!-- Security and Process Management -->
+    <key>InitGroups</key>
+    <true/>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <!-- Disable automatic termination -->
+    <key>EnableTransactions</key>
+    <false/>
+    
+    <!-- Network Dependencies -->
+    <key>LaunchOnlyOnce</key>
+    <false/>
+    
+</dict>
+</plist>
