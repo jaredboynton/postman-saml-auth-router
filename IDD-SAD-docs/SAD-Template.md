@@ -3,19 +3,33 @@
 
 ### Document Information
 - **Document Version**: 1.0
-- **Date**: [TO BE COMPLETED]
-- **Architect**: [TO BE COMPLETED]
-- **Reviewed By**: [TO BE COMPLETED]
-- **Approved By**: [TO BE COMPLETED]
-- **Status**: Draft
+- **Date**: 2024-08-20
+- **Architect**: [TO BE COMPLETED - Customer Solution Architect]
+- **Reviewed By**: [TO BE COMPLETED - Customer Architecture Review Board]
+- **Approved By**: [TO BE COMPLETED - Customer Leadership]
+- **Status**: Template for Customer Implementation
 
-**Architecture Note**: This document reflects the current simplified SAML enforcement daemon architecture. The solution has been streamlined to use a standalone Python daemon with SSL termination rather than complex enterprise security platform integrations, reducing deployment complexity while maintaining full SAML enforcement functionality.
+**Architecture Note**: This document reflects the complete Postman Enterprise deployment architecture including enterprise application deployment, identity provider integration, SCIM provisioning, Domain Capture, and security enforcement layers.
+
 
 ---
 
 ## 1. Executive Summary
 
-[TO BE COMPLETED: High-level architectural overview and key design decisions]
+The Postman Enterprise Control Solution architecture implements comprehensive organizational governance over API development platforms through a multi-layered approach combining application management, identity integration, domain control, and security enforcement.
+
+**Key Architectural Decisions:**
+1. **Enterprise Application Deployment**: Centrally managed MSI/PKG packages replacing consumer installations
+2. **Identity-First Architecture**: Corporate SAML SSO with automated SCIM provisioning as the foundation
+3. **Domain-Based Control**: Postman Domain Capture providing organizational ownership and access control
+4. **Layered Security**: Optional [SAML enforcement daemon](https://github.com/jaredboynton/postman-saml-enforcer) providing additional device trust validation
+5. **Transparent Operation**: Minimal user experience impact while maintaining complete administrative control
+
+**Architecture Benefits:**
+- Complete data governance preventing unauthorized API access
+- Seamless user experience preserving developer productivity
+- Scalable deployment leveraging existing enterprise infrastructure
+- Comprehensive audit trail and compliance capabilities
 
 ---
 
@@ -25,10 +39,23 @@
 [TO BE COMPLETED: Business requirements driving the architectural decisions]
 
 ### 2.2 Architectural Principles
-[TO BE COMPLETED: Key principles guiding the solution design]
+**Customer-Specific Template**: Define your organization's architectural principles such as:
+- Security-first design approach
+- Minimal user experience disruption
+- Leverage existing enterprise infrastructure
+- Scalable and maintainable solutions
+- Compliance with corporate standards
 
 ### 2.3 Architecture Goals
-[TO BE COMPLETED: What the architecture aims to achieve]
+**Technical Goals (Achieved by Reference Architecture):**
+- **Complete API Governance**: 100% visibility and control over API development activities
+- **Data Loss Prevention**: Eliminate unauthorized access to corporate API credentials and schemas
+- **Identity Integration**: Seamless corporate SSO with automated user provisioning
+- **Device Trust Validation**: Ensure only managed devices access corporate API development resources
+- **Transparent Operation**: Maintain developer productivity while enforcing security controls
+
+**Business Goals (Customer-Specific):**
+[TO BE COMPLETED: Customer-specific business objectives and success criteria]
 
 ---
 
@@ -71,35 +98,105 @@
   - Allow: `com.postmanlabs.enterprise.mac`
 - **Management**: MDM deployment (Jamf/Intune)
 
-#### 4.2.2 SAML Enforcement Layer
-**Standalone Daemon:**
-- **Interception Target**: `identity.getpostman.com` (via hosts file redirection)
-- **Listen Port**: 443 (HTTPS SSL-terminating proxy)
-- **Specific URL Paths**:
-  - `/login`
-  - `/enterprise/login`  
-  - `/enterprise/login/authchooser`
-- **SAML Enforcement**: HTTP 302 redirects to corporate Identity Provider
-- **Parameter Preservation**: 
-  - `auth_challenge` - Authentication challenge tokens
-  - `continue` - Post-authentication redirect URLs
-  - `team` - Postman team identifier
-- **Transparent Proxy**: All non-authentication requests proxied to upstream
+#### 4.2.2 Identity Provider Integration Layer
+**SAML SSO Integration:**
+- **Protocol**: SAML 2.0 with corporate identity providers (Okta, Azure AD, ADFS)
+- **Authentication Flow**: Standard SAML assertion exchange with Postman Enterprise
+- **Attribute Mapping**: Corporate directory attributes mapped to Postman user properties
+- **Session Management**: SSO session lifecycle managed by corporate identity provider
 
-**SAML Flow Architecture:**
+**SCIM User Provisioning:**
+- **Protocol**: SCIM 2.0 for automated user lifecycle management
+- **Provisioning**: Real-time user creation, updates, and deprovisioning
+- **Team Assignment**: Automated team membership based on directory group membership
+- **Attribute Synchronization**: User profile data sync from corporate directory
+
+#### 4.2.3 Domain Control Layer
+**Domain Capture Implementation:**
+- **Domain Verification**: DNS TXT record or HTML file verification proving domain ownership
+- **Organizational Control**: Administrative oversight of all teams within verified domain
+- **Access Restrictions**: Prevent consumer Postman access for users within captured domains
+- **Team Management**: Centralized team creation and membership management
+
+#### 4.2.4 Security Enforcement Layer (Optional)
+**SAML Enforcement Daemon** ([Reference Implementation](https://github.com/jaredboynton/postman-saml-enforcer)):
+- **Device Trust Validation**: Ensures only managed devices can access corporate instance
+- **Bidirectional Control**: Managed devices can only access corporate instance (not personal)
+- **Technical Implementation**:
+  - SSL interception of `identity.getpostman.com` via hosts file redirection
+  - HTTPS proxy on port 443 with automatic certificate generation and trust
+  - Parameter-preserving redirects to corporate SAML endpoints
+  - Transparent proxy for all non-authentication requests
+
+**Complete Security Flow:**
 ```
-User Request → Hosts File Redirect → Daemon Interception → Parameter Extraction → 
-Corporate SAML IDP → SAML Response → Postman Enterprise Authentication → Authorized Access
+Managed Device + IDP Trust → SAML Daemon Interception → Corporate SAML Authentication → 
+Postman Enterprise Access (Corporate Instance Only)
 ```
 
-#### 4.2.3 Identity and Access Management
-[TO BE COMPLETED: SAML integration, user provisioning, role management]
+#### 4.2.5 Application Management Layer
+**Enterprise Application Deployment:**
+- **Windows**: MSI packages deployed via Group Policy or SCCM
+- **macOS**: PKG installers deployed via MDM (Jamf Pro, Microsoft Intune)
+- **Configuration Management**: Centralized application settings and policy enforcement
+- **Update Management**: Controlled application updates through existing deployment infrastructure
+
+**Application Control (Optional):**
+- **Windows**: AppLocker policies preventing consumer Postman execution
+- **macOS**: Configuration Profiles blocking consumer application bundles
+- **Enforcement**: Certificate-based blocking with explicit enterprise allowlisting
 
 ### 4.3 Data Flow Architecture
-[TO BE COMPLETED: How data flows between components]
+
+**Authentication Flow:**
+```
+User → Postman Enterprise → SAML SSO Request → Corporate IDP → 
+SAML Assertion → Postman Authentication → Workspace Access
+```
+
+**User Provisioning Flow:**
+```
+Corporate Directory Changes → SCIM API → Postman Enterprise → 
+User/Team Provisioning → Workspace Access Control
+```
+
+**Security Enforcement Flow (Optional):**
+```
+Managed Device → SAML Daemon → Authentication Interception → 
+Corporate IDP Redirect → Device Trust Validation → Authorized Access
+```
+
+**Administrative Control Flow:**
+```
+Domain Verification → Administrative Control → Team Management → 
+Workspace Governance → API Collection Control → Audit Logging
+```
 
 ### 4.4 Security Architecture
-[TO BE COMPLETED: Security controls and mechanisms]
+
+**Identity Security:**
+- **SAML Assertions**: Cryptographically signed authentication tokens
+- **Session Management**: Corporate identity provider controls session lifecycle
+- **Multi-Factor Authentication**: MFA enforcement through corporate IDP
+- **Device Trust**: Optional IDP device trust policies for additional security
+
+**Network Security:**
+- **HTTPS Only**: All communications encrypted in transit
+- **Certificate Validation**: Proper SSL/TLS certificate chain validation
+- **DNS Security**: Secure domain resolution with fallback mechanisms
+- **Firewall Integration**: Outbound access controls and monitoring
+
+**Application Security:**
+- **Code Signing**: Enterprise applications validated through certificate authority
+- **Privilege Separation**: Services run with minimal required system privileges
+- **Configuration Security**: Sensitive configuration data properly protected
+- **Update Security**: Controlled application updates through managed deployment
+
+**Data Security:**
+- **API Credential Protection**: Prevention of credential extraction to unmanaged devices
+- **Workspace Isolation**: Team and workspace access controls prevent data leakage
+- **Audit Logging**: Complete activity logging for compliance and incident response
+- **Data Loss Prevention**: Organizational controls prevent unauthorized data access
 
 ---
 
@@ -119,18 +216,57 @@ Corporate SAML IDP → SAML Response → Postman Enterprise Authentication → A
 - **Certificate Authority**: Apple Developer ID Certification Authority
 - **Package Format**: PKG (macOS Installer)
 
-**SAML Enforcement:**
-- **SAML Daemon**: Standalone Python daemon (SSL-terminating proxy)
-- **SAML Protocol**: Security Assertion Markup Language 2.0  
-- **SSL/TLS**: Self-signed certificate-based HTTPS termination
+**Identity Integration:**
+- **SAML Protocol**: Security Assertion Markup Language 2.0 for SSO
+- **SCIM Protocol**: System for Cross-domain Identity Management 2.0 for provisioning
+- **Domain Verification**: DNS TXT record or HTML file verification
+- **Corporate Directory**: Integration with Active Directory, LDAP, or cloud directories
+
+**Security Enforcement (Optional Layer):**
+- **SAML Daemon**: Python-based SSL-terminating proxy for device trust validation
+- **SSL/TLS**: Automatic certificate generation and system trust installation
 - **DNS Control**: /etc/hosts file modification for domain redirection
-- **Port**: 443 (HTTPS) with localhost (127.0.0.1) binding
+- **Service Management**: Windows Service and macOS LaunchDaemon deployment
 
 ### 5.2 Integration Points
-[TO BE COMPLETED: How components integrate with existing systems]
+
+**Identity Provider Integration:**
+- **SAML SSO**: Standard SAML 2.0 integration with corporate identity providers
+- **SCIM Provisioning**: RESTful API integration for automated user/team management
+- **Attribute Mapping**: Corporate directory attributes mapped to Postman user properties
+- **Group Synchronization**: Directory group membership controls Postman team assignment
+
+**Endpoint Management Integration:**
+- **Windows**: Group Policy Software Installation and SCCM application deployment
+- **macOS**: MDM application deployment via Jamf Pro, Microsoft Intune, or similar
+- **Configuration Management**: Centralized policy deployment and device compliance validation
+- **Service Monitoring**: Integration with existing endpoint monitoring solutions
+
+**Network Infrastructure Integration:**
+- **DNS**: Corporate DNS servers for domain resolution and verification
+- **Firewalls**: Outbound HTTPS access to Postman domains and identity provider endpoints
+- **Certificate Authority**: Integration with corporate PKI for certificate validation
+- **Audit Systems**: SIEM integration for authentication and access logging
 
 ### 5.3 Development and Deployment Tools
-[TO BE COMPLETED: Tools used for development and deployment]
+
+**Reference Implementation:**
+- **Repository**: [postman-saml-enforcer](https://github.com/jaredboynton/postman-saml-enforcer)
+- **Language**: Python 3.7+ with standard library modules
+- **Service Management**: Cross-platform service installation and management scripts
+- **Configuration**: JSON-based configuration with validation and error handling
+
+**Deployment Automation:**
+- **Windows**: PowerShell scripts for automated service installation and configuration
+- **macOS**: Bash scripts for LaunchDaemon installation and service management
+- **Session Management**: Python utility for clearing existing consumer Postman sessions
+- **Testing**: Automated test suites for component and integration validation
+
+**Enterprise Integration:**
+- **Group Policy**: Windows administrative templates and policy deployment
+- **MDM Profiles**: macOS configuration profiles for application and security control
+- **Monitoring**: Health check endpoints and service status reporting
+- **Maintenance**: Automated certificate renewal and service health monitoring
 
 ---
 
@@ -413,31 +549,47 @@ def _handle_request(self):
 **Configuration JSON Template:**
 ```json
 {
-  "postman_team_name": "your-team-name",
-  "saml_init_url": "https://identity.getpostman.com/sso/okta/tenant-id/init",
+  "postman_team_name": "your-corporate-team-name",
+  "saml_init_url": "https://identity.getpostman.com/sso/saml/init",
+  "dns_servers": ["8.8.8.8", "1.1.1.1"],
   "ssl_cert": "ssl/cert.pem",
-  "ssl_key": "ssl/key.pem"
+  "ssl_key": "ssl/key.pem",
+  "listen_port": 443
 }
 ```
 
 **Supported SAML Identity Providers:**
-- **Okta**: `https://identity.getpostman.com/sso/okta/tenant-id/init`
-- **Azure AD (ADFS)**: `https://identity.getpostman.com/sso/adfs/tenant-id/init`
-- **Generic SAML**: `https://identity.getpostman.com/sso/saml/tenant-id/init`
+- **Okta**: Full SAML 2.0 and SCIM 2.0 integration
+- **Azure AD**: SAML SSO with Azure AD SCIM provisioning
+- **ADFS**: On-premises Active Directory Federation Services
+- **Generic SAML**: Any SAML 2.0 compliant identity provider
 
-**Daemon Management Commands:**
+**Service Management Commands:**
+
+*Windows (PowerShell as Administrator):*
+```powershell
+# Install and start Windows service
+.\service\windows\install-service.ps1 install
+.\service\windows\install-service.ps1 start
+
+# Check service status
+.\service\windows\install-service.ps1 status
+
+# Clear sessions before deployment
+.\service\windows\install-service.ps1 srefresh
+```
+
+*macOS (Terminal with sudo):*
 ```bash
-# Start daemon (requires sudo for port 443 and certificate trust)
-sudo ./scripts/daemon_manager.sh start
+# Install and start system daemon
+sudo ./service/macos/install-service.sh install
+sudo ./service/macos/install-service.sh start
 
 # Check daemon status
-sudo ./scripts/daemon_manager.sh status
+sudo ./service/macos/install-service.sh status
 
-# Stop daemon and clean up hosts file
-sudo ./scripts/daemon_manager.sh stop
-
-# Restart daemon
-sudo ./scripts/daemon_manager.sh restart
+# Clear sessions before deployment
+sudo ./service/macos/install-service.sh srefresh
 ```
 
 ### Appendix B: Network Diagrams
